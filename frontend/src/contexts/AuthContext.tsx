@@ -7,11 +7,13 @@ import React, {
     useState,
     ReactNode,
 } from "react";
-import { supabase } from "@/lib/supabase";
+
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "https://misu-api.mihailnica10.workers.dev";
 
 interface User {
     id: string;
     email: string;
+    name?: string;
 }
 
 interface AuthContextType {
@@ -19,53 +21,72 @@ interface AuthContextType {
     isAuthenticated: boolean;
     authLoading: boolean;
     signOut: () => Promise<void>;
+    login: (email: string, password: string) => Promise<void>;
+    signup: (email: string, password: string, name: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+function getToken(): string | null {
+    if (typeof window === "undefined") return null;
+    return localStorage.getItem("misu_token");
+}
+
+function setToken(token: string | null) {
+    if (typeof window === "undefined") return;
+    if (token) localStorage.setItem("misu_token", token);
+    else localStorage.removeItem("misu_token");
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
     const [user, setUser] = useState<User | null>(null);
     const [authLoading, setAuthLoading] = useState(true);
 
     useEffect(() => {
-        const checkUser = async () => {
-            const {
-                data: { session },
-            } = await supabase.auth.getSession();
-
-            if (session?.user) {
-                setUser({
-                    id: session.user.id,
-                    email: session.user.email || "",
-                });
-            }
+        const token = getToken();
+        if (!token) {
             setAuthLoading(false);
-        };
-
-        checkUser();
-
-        const {
-            data: { subscription },
-        } = supabase.auth.onAuthStateChange(async (_event, session) => {
-            if (session?.user) {
-                setUser({
-                    id: session.user.id,
-                    email: session.user.email || "",
-                });
-            } else {
-                setUser(null);
-            }
-            setAuthLoading(false);
-        });
-
-        return () => {
-            subscription.unsubscribe();
-        };
+            return;
+        }
+        fetch(`${API_BASE}/api/auth/session`, {
+            headers: { Authorization: `Bearer ${token}` },
+        })
+            .then((r) => r.json())
+            .then((data) => {
+                if (data?.user) setUser(data.user);
+                else setToken(null);
+            })
+            .catch(() => setToken(null))
+            .finally(() => setAuthLoading(false));
     }, []);
 
     const signOut = async () => {
-        await supabase.auth.signOut();
+        setToken(null);
         setUser(null);
+    };
+
+    const login = async (email: string, password: string) => {
+        const res = await fetch(`${API_BASE}/api/auth/login`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email, password }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Login failed");
+        setToken(data.token);
+        setUser(data.user);
+    };
+
+    const signup = async (email: string, password: string, name: string) => {
+        const res = await fetch(`${API_BASE}/api/auth/signup`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email, password, name }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Signup failed");
+        setToken(data.token);
+        setUser(data.user);
     };
 
     return (
@@ -75,6 +96,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 isAuthenticated: !!user,
                 authLoading,
                 signOut,
+                login,
+                signup,
             }}
         >
             {children}

@@ -19,7 +19,8 @@
   ],
   "vars": {
     "ENVIRONMENT": "production",
-    "FRONTEND_URL": "https://misu.ro"
+    "FRONTEND_URL": "https://misu.ro",
+    "BETTER_AUTH_URL": "https://misu-api.mihailnica10.workers.dev"
   },
   "observability": {
     "enabled": true

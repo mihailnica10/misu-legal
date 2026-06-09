@@ -1,5 +1,5 @@
 {
-  "name": "mike-backend",
+  "name": "misu-backend",
   "version": "1.0.0",
   "private": true,
   "scripts": {
@@ -24,6 +24,7 @@
     "fast-xml-parser": "^5.7.1",
     "helmet": "^8.1.0",
     "hono": "^4.12.25",
+    "jose": "^6.2.3",
     "jszip": "^3.10.1",
     "libreoffice-convert": "^1.6.0",
     "mammoth": "^1.9.0",

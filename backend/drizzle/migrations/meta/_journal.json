@@ -8,6 +8,20 @@
       "when": 1781044279324,
       "tag": "0000_black_wolf_cub",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1781045861231,
+      "tag": "0001_aberrant_nighthawk",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1781047065834,
+      "tag": "0002_flawless_nuke",
+      "breakpoints": true
     }
   ]
 }
