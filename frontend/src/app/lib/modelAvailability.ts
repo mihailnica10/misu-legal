@@ -1,40 +1,39 @@
-import { SETTINGS_MODELS, type ModelOption } from "../components/assistant/ModelToggle";
-import type { ApiKeyState } from "@/app/lib/mikeApi";
+import { MODELS, type ModelOption } from "../components/assistant/ModelToggle";
 
-export type ModelProvider = "claude" | "gemini" | "openai";
+export type ModelProvider = "claude" | "gemini";
 
 export function getModelProvider(modelId: string): ModelProvider | null {
-    const model = SETTINGS_MODELS.find((m) => m.id === modelId);
+    const model = MODELS.find((m) => m.id === modelId);
     if (!model) return null;
-    return modelGroupToProvider(model.group);
+    return model.group === "Anthropic" ? "claude" : "gemini";
 }
 
 export function isModelAvailable(
     modelId: string,
-    apiKeys: ApiKeyState,
+    apiKeys: { claudeApiKey: string | null; geminiApiKey: string | null },
 ): boolean {
     const provider = getModelProvider(modelId);
     if (!provider) return false;
-    return isProviderAvailable(provider, apiKeys);
+    return provider === "claude"
+        ? !!apiKeys.claudeApiKey?.trim()
+        : !!apiKeys.geminiApiKey?.trim();
 }
 
 export function isProviderAvailable(
     provider: ModelProvider,
-    apiKeys: ApiKeyState,
+    apiKeys: { claudeApiKey: string | null; geminiApiKey: string | null },
 ): boolean {
-    return !!apiKeys[provider]?.configured;
+    return provider === "claude"
+        ? !!apiKeys.claudeApiKey?.trim()
+        : !!apiKeys.geminiApiKey?.trim();
 }
 
 export function providerLabel(provider: ModelProvider): string {
-    if (provider === "claude") return "Anthropic (Claude)";
-    if (provider === "openai") return "OpenAI";
-    return "Google (Gemini)";
+    return provider === "claude" ? "Anthropic (Claude)" : "Google (Gemini)";
 }
 
 export function modelGroupToProvider(
     group: ModelOption["group"],
 ): ModelProvider {
-    if (group === "Anthropic") return "claude";
-    if (group === "OpenAI") return "openai";
-    return "gemini";
+    return group === "Anthropic" ? "claude" : "gemini";
 }

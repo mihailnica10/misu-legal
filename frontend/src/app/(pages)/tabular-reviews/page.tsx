@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronDown, Check, Table2 } from "lucide-react";
+import { Plus, Loader2, ChevronDown, Check, Table2 } from "lucide-react";
+import { HeaderSearchBtn } from "@/app/components/shared/HeaderSearchBtn";
 import { RowActions } from "@/app/components/shared/RowActions";
 import {
     deleteTabularReview,
@@ -11,19 +12,19 @@ import {
     listProjects,
     updateTabularReview,
 } from "@/app/lib/mikeApi";
-import type { TabularReview, Project } from "@/app/components/shared/types";
+import type { TabularReview, MikeProject } from "@/app/components/shared/types";
 import { ToolbarTabs } from "@/app/components/shared/ToolbarTabs";
 import { AddNewTRModal } from "@/app/components/tabular/AddNewTRModal";
 import { OwnerOnlyModal } from "@/app/components/shared/OwnerOnlyModal";
 import { useAuth } from "@/contexts/AuthContext";
-import { PageHeader } from "@/app/components/shared/PageHeader";
 
 type Tab = "all" | "in-project" | "standalone";
 
-const NAME_COL_W = "w-[332px] shrink-0";
+const CHECK_W = "w-8 shrink-0";
+const NAME_COL_W = "w-[300px] shrink-0";
 
 const TABS: { id: Tab; label: string }[] = [
-    { id: "all", label: "All" },
+    { id: "all", label: "All Reviews" },
     { id: "in-project", label: "In Project" },
     { id: "standalone", label: "Standalone" },
 ];
@@ -38,7 +39,7 @@ function formatDate(iso: string) {
 
 export default function TabularReviewsPage() {
     const [reviews, setReviews] = useState<TabularReview[]>([]);
-    const [projects, setProjects] = useState<Project[]>([]);
+    const [projects, setProjects] = useState<MikeProject[]>([]);
     const [loading, setLoading] = useState(true);
     const [creating, setCreating] = useState(false);
     const [newTROpen, setNewTROpen] = useState(false);
@@ -55,7 +56,6 @@ export default function TabularReviewsPage() {
     const actionsRef = useRef<HTMLDivElement>(null);
     const router = useRouter();
     const { user } = useAuth();
-    const stickyCellBg = "bg-[#fcfcfd]";
 
     useEffect(() => {
         Promise.all([
@@ -239,7 +239,7 @@ export default function TabularReviewsPage() {
     );
 
     const toolbarActions = (
-        <>
+        <div className="flex items-center gap-2">
             {selectedIds.length > 0 && (
                 <div ref={actionsRef} className="relative">
                     <button
@@ -262,32 +262,31 @@ export default function TabularReviewsPage() {
                 </div>
             )}
             {projectFilterButton}
-        </>
+        </div>
     );
 
     return (
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 overflow-y-auto bg-white">
             {/* Page header */}
-            <PageHeader
-                actions={[
-                    {
-                        type: "search",
-                        value: search,
-                        onChange: setSearch,
-                        placeholder: "Search reviews…",
-                    },
-                    {
-                        type: "new",
-                        onClick: () => setNewTROpen(true),
-                        loading: creating,
-                        title: "New tabular review",
-                    },
-                ]}
-            >
+            <div className="flex items-center justify-between px-8 py-4">
                 <h1 className="text-2xl font-medium font-serif text-gray-900">
                     Tabular Reviews
                 </h1>
-            </PageHeader>
+                <div className="flex items-center gap-2">
+                    <HeaderSearchBtn value={search} onChange={setSearch} placeholder="Search reviews…" />
+                    <button
+                        onClick={() => setNewTROpen(true)}
+                        disabled={creating}
+                        className="flex items-center justify-center p-1.5 text-gray-500 hover:text-gray-900 transition-colors disabled:opacity-40"
+                    >
+                        {creating ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                            <Plus className="h-4 w-4" />
+                        )}
+                    </button>
+                </div>
+            </div>
 
             <ToolbarTabs
                 tabs={TABS}
@@ -299,11 +298,9 @@ export default function TabularReviewsPage() {
             {/* Table */}
             <div className="w-full overflow-x-auto">
                 <div className="min-w-max">
-                <div className="flex items-center h-8 pr-3 md:pr-10 border-b border-gray-200 text-xs text-gray-500 font-medium select-none">
-                    <div className={`sticky left-0 z-[60] ${NAME_COL_W} ${stickyCellBg} flex items-center gap-4 self-stretch pl-4 pr-2 text-left`}>
-                        {loading ? (
-                            <div className="h-2.5 w-2.5 shrink-0 rounded bg-gray-100 animate-pulse" />
-                        ) : (
+                <div className="flex items-center h-8 pr-8 border-b border-gray-200 text-xs text-gray-500 font-medium select-none">
+                    <div className={`sticky left-0 z-[60] ${CHECK_W} relative bg-white flex items-center justify-center self-stretch before:absolute before:inset-x-0 before:bottom-0 before:h-px before:bg-white`}>
+                        {!loading && (
                             <input
                                 type="checkbox"
                                 checked={allSelected}
@@ -314,7 +311,9 @@ export default function TabularReviewsPage() {
                                 className="h-2.5 w-2.5 rounded border-gray-200 cursor-pointer accent-black"
                             />
                         )}
-                        <span>Name</span>
+                    </div>
+                    <div className={`sticky left-8 z-[60] ${NAME_COL_W} bg-white pl-2 text-left`}>
+                        Name
                     </div>
                     <div className="ml-auto w-24 shrink-0">Columns</div>
                     <div className="w-24 shrink-0">Documents</div>
@@ -328,10 +327,10 @@ export default function TabularReviewsPage() {
                         {[1, 2, 3].map((i) => (
                             <div
                                 key={i}
-                                className="flex items-center h-10 pr-3 md:pr-10 border-b border-gray-50"
+                                className="flex items-center h-10 pr-8 border-b border-gray-50"
                             >
-                                <div className={`${NAME_COL_W} flex shrink-0 items-center gap-4 pl-4 pr-2`}>
-                                    <div className="h-2.5 w-2.5 shrink-0 rounded bg-gray-100 animate-pulse" />
+                                <div className="w-8 shrink-0" />
+                                <div className="flex-1 min-w-0 pl-3 pr-4">
                                     <div className="h-3.5 w-48 rounded bg-gray-100 animate-pulse" />
                                 </div>
                                 <div className="w-24 shrink-0">
@@ -384,7 +383,7 @@ export default function TabularReviewsPage() {
                             );
                             const rowBg = selectedIds.includes(review.id)
                                 ? "bg-gray-50"
-                                : stickyCellBg;
+                                : "bg-white";
                             return (
                                 <div
                                     key={review.id}
@@ -396,57 +395,57 @@ export default function TabularReviewsPage() {
                                                 : `/tabular-reviews/${review.id}`,
                                         );
                                     }}
-                                    className="group flex items-center h-10 pr-3 md:pr-10 border-b border-gray-50 hover:bg-gray-100 cursor-pointer transition-colors"
+                                    className="group flex items-center h-10 pr-8 border-b border-gray-50 hover:bg-gray-50 cursor-pointer transition-colors"
                                 >
-                                    <div className={`sticky left-0 z-[60] ${NAME_COL_W} ${rowBg} py-2 pl-4 pr-2 transition-colors group-hover:bg-gray-100`}>
-                                        <div className="flex min-w-0 items-center gap-4">
+                                    <div
+                                        className={`sticky left-0 z-[60] ${CHECK_W} p-2 flex items-center justify-center ${rowBg} group-hover:bg-gray-50`}
+                                        onClick={(e) => e.stopPropagation()}
+                                    >
+                                        <input
+                                            type="checkbox"
+                                            checked={selectedIds.includes(
+                                                review.id,
+                                            )}
+                                            onChange={() =>
+                                                toggleOne(review.id)
+                                            }
+                                            className="h-2.5 w-2.5 rounded border-gray-200 cursor-pointer accent-black"
+                                        />
+                                    </div>
+                                    <div className={`sticky left-8 z-[60] ${NAME_COL_W} p-2 ${rowBg} group-hover:bg-gray-50`}>
+                                        {renamingId === review.id ? (
                                             <input
-                                                type="checkbox"
-                                                checked={selectedIds.includes(
-                                                    review.id,
-                                                )}
-                                                onChange={() =>
-                                                    toggleOne(review.id)
+                                                autoFocus
+                                                value={renameValue}
+                                                onChange={(e) =>
+                                                    setRenameValue(
+                                                        e.target.value,
+                                                    )
+                                                }
+                                                onKeyDown={(e) => {
+                                                    if (e.key === "Enter")
+                                                        handleRenameSubmit(
+                                                            review.id,
+                                                        );
+                                                    if (e.key === "Escape")
+                                                        setRenamingId(null);
+                                                }}
+                                                onBlur={() =>
+                                                    handleRenameSubmit(
+                                                        review.id,
+                                                    )
                                                 }
                                                 onClick={(e) =>
                                                     e.stopPropagation()
                                                 }
-                                                className="h-2.5 w-2.5 shrink-0 rounded border-gray-200 cursor-pointer accent-black"
+                                                className="w-full text-sm text-gray-800 bg-transparent outline-none"
                                             />
-                                            {renamingId === review.id ? (
-                                                <input
-                                                    autoFocus
-                                                    value={renameValue}
-                                                    onChange={(e) =>
-                                                        setRenameValue(
-                                                            e.target.value,
-                                                        )
-                                                    }
-                                                    onKeyDown={(e) => {
-                                                        if (e.key === "Enter")
-                                                            handleRenameSubmit(
-                                                                review.id,
-                                                            );
-                                                        if (e.key === "Escape")
-                                                            setRenamingId(null);
-                                                    }}
-                                                    onBlur={() =>
-                                                        handleRenameSubmit(
-                                                            review.id,
-                                                        )
-                                                    }
-                                                    onClick={(e) =>
-                                                        e.stopPropagation()
-                                                    }
-                                                    className="min-w-0 flex-1 text-sm text-gray-800 bg-transparent outline-none"
-                                                />
-                                            ) : (
-                                                <span className="min-w-0 flex-1 truncate text-sm text-gray-800">
-                                                    {review.title ??
-                                                        "Untitled Review"}
-                                                </span>
-                                            )}
-                                        </div>
+                                        ) : (
+                                            <span className="text-sm text-gray-800 truncate block">
+                                                {review.title ??
+                                                    "Untitled Review"}
+                                            </span>
+                                        )}
                                     </div>
                                     <div className="ml-auto w-24 shrink-0 text-sm text-gray-500 truncate">
                                         {review.columns_config?.length ?? 0}

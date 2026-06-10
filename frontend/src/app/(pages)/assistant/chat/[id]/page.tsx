@@ -61,7 +61,6 @@ export default function AssistantChatPage() {
 
     return (
         <ChatView
-            chatId={id}
             messages={messages}
             isResponseLoading={isResponseLoading}
             handleChat={handleChat}

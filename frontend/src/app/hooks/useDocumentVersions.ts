@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 
-
 export interface DocumentVersionRow {
     id: string;
     version_number: number | null;

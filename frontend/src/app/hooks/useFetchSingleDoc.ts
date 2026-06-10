@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState } from "react";
 
-
 /**
  * /display returns either PDF bytes (when the active version has a PDF
  * rendition) or raw DOCX bytes otherwise. Reporting the type lets the

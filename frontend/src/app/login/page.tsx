@@ -27,25 +27,15 @@ export default function LoginPage() {
         setError(null);
 
         try {
-            const apiBase =
-                process.env.NEXT_PUBLIC_API_BASE_URL ??
-                "https://misu-api.mihailnica10.workers.dev";
-            const resp = await fetch(`${apiBase}/api/auth/login`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
+            const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://misu-api.mihailnica10.workers.dev';
+            const res = await fetch(`${API_BASE}/api/auth/login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ email, password }),
             });
-
-            if (!resp.ok) {
-                const errBody = await resp.json().catch(() => null);
-                throw new Error(
-                    errBody?.error ?? errBody?.message ?? `HTTP ${resp.status}`,
-                );
-            }
-
-            const data = (await resp.json()) as { token: string };
-            localStorage.setItem("misu_token", data.token);
-
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Login failed');
+            localStorage.setItem('misu_token', data.token);
             router.push("/assistant");
         } catch (error: any) {
             setError(error.message || "An error occurred during login");
@@ -61,7 +51,7 @@ export default function LoginPage() {
             </div>
             <div className="w-full max-w-md">
                 {/* Login Form */}
-                <div className="bg-white border border-gray-200 rounded-2xl p-8 mb-4">
+                <div className="bg-white border border-gray-200 rounded-2xl p-8">
                     <div className="flex justify-between items-center mb-6">
                         <h2 className="text-left text-2xl font-serif">
                             Log In
@@ -130,12 +120,6 @@ export default function LoginPage() {
                         </Button>
                     </form>
                 </div>
-                <p className="text-center text-xs text-gray-500 leading-relaxed px-2">
-                    Mike hosted on MikeOSS.com is currently a demo service.
-                    Please do not upload, submit, or store sensitive,
-                    confidential, privileged, client, or personally
-                    identifiable documents.
-                </p>
             </div>
         </div>
     );

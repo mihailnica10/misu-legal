@@ -9,9 +9,8 @@ import {
     FileText,
     Folder,
     Trash2,
-    Loader2,
 } from "lucide-react";
-import type { Document, Project } from "./types";
+import type { MikeDocument, MikeProject } from "./types";
 import { VersionChip } from "./VersionChip";
 
 function formatDate(iso: string | null) {
@@ -30,8 +29,8 @@ export function DocFileIcon({ fileType }: { fileType: string | null }) {
 }
 
 interface FileDirectoryProps {
-    standaloneDocs: Document[];
-    directoryProjects: Project[];
+    standaloneDocs: MikeDocument[];
+    directoryProjects: MikeProject[];
     loading: boolean;
     selectedIds: Set<string>;
     onChange: (ids: Set<string>) => void;
@@ -40,7 +39,6 @@ interface FileDirectoryProps {
     emptyMessage?: string;
     heading?: string;
     onDelete?: (ids: string[]) => void | Promise<void>;
-    uploadingFilenames?: string[];
 }
 
 export function FileDirectory({
@@ -54,7 +52,6 @@ export function FileDirectory({
     emptyMessage = "No documents yet",
     heading = "Documents",
     onDelete,
-    uploadingFilenames = [],
 }: FileDirectoryProps) {
     const [expandedProjects, setExpandedProjects] = useState<Set<string>>(
         new Set(),
@@ -145,11 +142,7 @@ export function FileDirectory({
         );
     }
 
-    if (
-        allDocs.length === 0 &&
-        directoryProjects.length === 0 &&
-        uploadingFilenames.length === 0
-    ) {
+    if (allDocs.length === 0 && directoryProjects.length === 0) {
         return (
             <p className="text-center text-sm text-gray-400 py-8">
                 {emptyMessage}
@@ -161,7 +154,6 @@ export function FileDirectory({
         <div className="rounded-sm border border-gray-100 overflow-hidden">
             <div>
                 {(standaloneDocs.length > 0 ||
-                    uploadingFilenames.length > 0 ||
                     (onDelete && selectedCount > 0)) && (
                     <div className="flex items-center justify-between px-2 py-2">
                         <p className="text-xs font-medium text-gray-400">
@@ -193,21 +185,6 @@ export function FileDirectory({
                         </div>
                     </div>
                 )}
-                {uploadingFilenames.map((filename) => (
-                    <div
-                        key={`uploading-${filename}`}
-                        className="w-full flex items-center gap-2 px-2 py-2 text-xs text-left"
-                    >
-                        <span className="shrink-0 h-3.5 w-3.5 rounded border border-gray-300" />
-                        <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-400 shrink-0" />
-                        <span className="flex-1 truncate text-gray-400">
-                            {filename}
-                        </span>
-                        <span className="shrink-0 text-gray-300">
-                            Uploading
-                        </span>
-                    </div>
-                ))}
                 {standaloneDocs.map((doc) => {
                     const selected = selectedIds.has(doc.id);
                     return (
@@ -238,12 +215,7 @@ export function FileDirectory({
                             >
                                 {doc.filename}
                             </span>
-                            <VersionChip
-                                n={
-                                    doc.active_version_number ??
-                                    doc.latest_version_number
-                                }
-                            />
+                            <VersionChip n={doc.latest_version_number} />
                             {doc.created_at && (
                                 <span className="shrink-0 text-gray-300">
                                     {formatDate(doc.created_at)}
@@ -338,10 +310,7 @@ export function FileDirectory({
                                                         {doc.filename}
                                                     </span>
                                                     <VersionChip
-                                                        n={
-                                                            doc.active_version_number ??
-                                                            doc.latest_version_number
-                                                        }
+                                                        n={doc.latest_version_number}
                                                     />
                                                     {doc.created_at && (
                                                         <span className="shrink-0 text-gray-300">

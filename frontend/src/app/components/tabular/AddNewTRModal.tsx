@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Check, ChevronDown, Loader2, Upload } from "lucide-react";
-import type { Document, Project, Workflow } from "../shared/types";
+import { createPortal } from "react-dom";
+import { Check, ChevronDown, Loader2, Upload, X } from "lucide-react";
+import type { MikeDocument, MikeProject, MikeWorkflow } from "../shared/types";
 import {
     getProject,
     listProjects,
@@ -13,7 +14,6 @@ import {
 } from "@/app/lib/mikeApi";
 import { FileDirectory } from "../shared/FileDirectory";
 import { BUILT_IN_WORKFLOWS } from "../workflows/builtinWorkflows";
-import { Modal } from "../shared/Modal";
 
 interface Props {
     open: boolean;
@@ -22,11 +22,11 @@ interface Props {
         title: string,
         projectId?: string,
         documentIds?: string[],
-        columnsConfig?: Workflow["columns_config"],
+        columnsConfig?: MikeWorkflow["columns_config"],
     ) => void;
-    projects?: Project[];
+    projects?: MikeProject[];
     /** When provided, skip the project/directory picker and show only these docs */
-    projectDocs?: Document[];
+    projectDocs?: MikeDocument[];
     projectName?: string;
     projectCmNumber?: string | null;
 }
@@ -47,12 +47,12 @@ export function AddNewTRModal({
     const [projectDropdownOpen, setProjectDropdownOpen] = useState(false);
 
     // Project-scoped docs (when underProject is true and no fixedProjectDocs)
-    const [projectDocs, setProjectDocs] = useState<Document[]>([]);
+    const [projectDocs, setProjectDocs] = useState<MikeDocument[]>([]);
     const [loadingDocs, setLoadingDocs] = useState(false);
 
     // Full directory (when underProject is false)
-    const [standaloneDocs, setStandaloneDocs] = useState<Document[]>([]);
-    const [directoryProjects, setDirectoryProjects] = useState<Project[]>(
+    const [standaloneDocs, setStandaloneDocs] = useState<MikeDocument[]>([]);
+    const [directoryProjects, setDirectoryProjects] = useState<MikeProject[]>(
         [],
     );
     const [loadingDirectory, setLoadingDirectory] = useState(false);
@@ -64,13 +64,12 @@ export function AddNewTRModal({
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     // Workflow templates
-    const [workflows, setWorkflows] = useState<Workflow[]>([]);
+    const [workflows, setWorkflows] = useState<MikeWorkflow[]>([]);
     const [loadingWorkflows, setLoadingWorkflows] = useState(false);
     const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(
         null,
     );
     const [workflowDropdownOpen, setWorkflowDropdownOpen] = useState(false);
-    const formId = "new-tabular-review-modal-form";
 
     useEffect(() => {
         if (!open) return;
@@ -206,7 +205,7 @@ export function AddNewTRModal({
         : underProject
           ? []
           : directoryProjects;
-    const flatProjectDocs: Document[] =
+    const flatProjectDocs: MikeDocument[] =
         !isProjectMode && underProject ? projectDocs : [];
     const directoryLoading = isProjectMode
         ? false
@@ -214,59 +213,56 @@ export function AddNewTRModal({
           ? loadingDocs
           : loadingDirectory;
     const showDirectory = isProjectMode || !underProject || !!selectedProjectId;
-    const breadcrumbs =
-        isProjectMode && projectName
-            ? [
-                  "Projects",
-                  `${projectName}${projectCmNumber ? ` (#${projectCmNumber})` : ""}`,
-                  "New Tabular Review",
-              ]
-            : ["Tabular Reviews", "New Tabular Review"];
 
-    return (
-        <Modal
-            open={open}
-            onClose={handleClose}
-            breadcrumbs={breadcrumbs}
-            secondaryAction={{
-                label: uploading ? "Uploading…" : "Upload",
-                icon: uploading ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                    <Upload className="h-3.5 w-3.5" />
-                ),
-                onClick: () => fileInputRef.current?.click(),
-                disabled: uploading,
-            }}
-            primaryAction={{
-                label: "Create",
-                type: "submit",
-                form: formId,
-                disabled: !title.trim() || (underProject && !selectedProjectId),
-            }}
-        >
-            <input
-                ref={fileInputRef}
-                type="file"
-                accept=".pdf,.docx,.doc"
-                multiple
-                className="hidden"
-                onChange={handleUpload}
-            />
-            <form
-                id={formId}
-                onSubmit={handleSubmit}
-                className="flex flex-col min-h-0 flex-1"
-            >
-                <div className="space-y-5">
-                    <input
-                        type="text"
-                        value={title}
-                        onChange={(e) => setTitle(e.target.value)}
-                        placeholder="Review name"
-                        className="w-full text-2xl font-serif text-gray-800 placeholder-gray-400 focus:outline-none bg-transparent"
-                        autoFocus
-                    />
+    return createPortal(
+        <div className="fixed inset-0 z-[101] flex items-center justify-center bg-black/20 backdrop-blur-xs">
+            <div className="w-full max-w-2xl rounded-2xl bg-white shadow-2xl flex flex-col h-[600px]">
+                {/* Header */}
+                <div className="flex items-center justify-between px-6 pt-5 pb-2 shrink-0">
+                    <div className="flex items-center gap-1.5 text-xs text-gray-400">
+                        {isProjectMode && projectName ? (
+                            <>
+                                <span>Projects</span>
+                                <span>›</span>
+                                <span>
+                                    {projectName}
+                                    {projectCmNumber ? ` (#${projectCmNumber})` : ""}
+                                </span>
+                                <span>›</span>
+                                <span>Tabular Reviews</span>
+                                <span>›</span>
+                                <span>New review</span>
+                            </>
+                        ) : (
+                            <>
+                                <span>Tabular Reviews</span>
+                                <span>›</span>
+                                <span>New review</span>
+                            </>
+                        )}
+                    </div>
+                    <button
+                        onClick={handleClose}
+                        className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors"
+                    >
+                        <X className="h-4 w-4" />
+                    </button>
+                </div>
+
+                <form
+                    onSubmit={handleSubmit}
+                    className="flex flex-col min-h-0 flex-1"
+                >
+                    <div className="px-6 pt-3 pb-4 space-y-5 overflow-y-auto flex-1">
+                        {/* Title */}
+                        <input
+                            type="text"
+                            value={title}
+                            onChange={(e) => setTitle(e.target.value)}
+                            placeholder="Review name"
+                            className="w-full text-2xl font-serif text-gray-800 placeholder-gray-400 focus:outline-none bg-transparent"
+                            autoFocus
+                        />
 
                         {/* Workflow template */}
                         <div className="space-y-2">
@@ -481,8 +477,56 @@ export function AddNewTRModal({
                                 </div>
                             </div>
                         )}
-                </div>
-            </form>
-        </Modal>
+                    </div>
+
+                    {/* Footer */}
+                    <div className="flex items-center justify-between gap-2 border-t border-gray-100 px-6 py-4 shrink-0">
+                        <div>
+                            <input
+                                ref={fileInputRef}
+                                type="file"
+                                accept=".pdf,.docx,.doc"
+                                multiple
+                                className="hidden"
+                                onChange={handleUpload}
+                            />
+                            <button
+                                type="button"
+                                onClick={() => fileInputRef.current?.click()}
+                                disabled={uploading}
+                                className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50 transition-colors"
+                            >
+                                {uploading ? (
+                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                    <Upload className="h-3.5 w-3.5" />
+                                )}
+                                {uploading ? "Uploading…" : "Upload"}
+                            </button>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <button
+                                type="button"
+                                onClick={handleClose}
+                                className="rounded-lg px-4 py-2 text-sm text-gray-500 hover:bg-gray-100 transition-colors"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="submit"
+                                disabled={
+                                    !title.trim() ||
+                                    (underProject && !selectedProjectId)
+                                }
+                                className="rounded-lg bg-gray-900 px-5 py-2 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-40 transition-colors"
+                            >
+                                Create
+                            </button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>,
+        document.body,
     );
 }

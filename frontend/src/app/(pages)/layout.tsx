@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { PanelLeft } from "lucide-react";
+import { Menu } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { ChatHistoryProvider } from "@/app/contexts/ChatHistoryContext";
 import { SidebarContext } from "@/app/contexts/SidebarContext";
@@ -77,36 +77,22 @@ export default function MikeLayout({
     return (
         <ChatHistoryProvider>
             <SidebarContext.Provider
-                value={{
-                    setSidebarOpen: (open) => {
-                        const isSmall =
-                            typeof window !== "undefined" &&
-                            window.innerWidth < 768;
-                        if (isSmall) {
-                            if (!open) setIsSidebarOpen(false);
-                            return;
-                        }
-                        setIsSidebarOpen(open);
-                        setIsSidebarOpenDesktop(open);
-                    },
-                }}
+                value={{ setSidebarOpen: (open) => { setIsSidebarOpen(open); setIsSidebarOpenDesktop(open); } }}
             >
-                <div className="h-dvh flex flex-col bg-gray-50/80">
-                    <div className="flex-1 flex min-w-0 overflow-visible">
+                <div className="h-dvh bg-white flex flex-col">
+                    <div className="flex-1 flex overflow-hidden">
                         <AppSidebar
                             isOpen={isSidebarOpen}
                             onToggle={handleSidebarToggle}
                         />
                         <div className="flex-1 flex flex-col h-dvh md:overflow-hidden relative w-full">
                             {/* Mobile header */}
-                            <div className="flex md:hidden items-center gap-3 px-4 pt-3 pb-1 shrink-0">
+                            <div className="flex md:hidden items-center gap-3 px-4 py-3 border-b border-gray-100 shrink-0">
                                 <button
                                     onClick={handleSidebarToggle}
-                                    className="flex h-8 w-8 items-center justify-center rounded-full bg-white/70 text-gray-700 shadow-[0_8px_24px_rgba(15,23,42,0.12)] ring-1 ring-white/70 backdrop-blur-md transition-all hover:bg-white/90 active:scale-95"
-                                    title="Open sidebar"
-                                    aria-label="Open sidebar"
+                                    className="flex items-center justify-center w-8 h-8 rounded hover:bg-gray-100 text-gray-500 transition-colors"
                                 >
-                                    <PanelLeft className="h-4 w-4" />
+                                    <Menu className="h-5 w-5" />
                                 </button>
                             </div>
                             <main className="flex-1 overflow-y-auto md:overflow-hidden w-full h-full">

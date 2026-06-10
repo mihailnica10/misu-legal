@@ -1,501 +1,832 @@
-1|"use client";
-2|
-3|import { useEffect, useRef, useState } from "react";
-4|import { createPortal } from "react-dom";
-5|import {
-6|    ChevronDown,
-7|    Folder,
-8|    MessageSquare,
-9|    Search,
-10|    Table2,
-11|    X,
-12|} from "lucide-react";
-13|import ReactMarkdown from "react-markdown";
-14|import remarkGfm from "remark-gfm";
-15|import type {
-16|    Document,
-17|    Workflow,
-18|} from "../shared/types";
-19|import { createTabularReview } from "@/app/lib/misuApi";
-20|import { useRouter } from "next/navigation";
-21|import { formatIcon, formatLabel } from "../tabular/columnFormat";
-22|import { useDirectoryData } from "../shared/useDirectoryData";
-23|import { FileDirectory } from "../shared/FileDirectory";
-24|import type { Project } from "../shared/types";
-25|import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
-26|
-27|interface Props {
-28|    workflows: Workflow[];
-29|    workflow: Workflow | null;
-30|    onClose: () => void;
-31|}
-32|
-33|// ---------------------------------------------------------------------------
-34|// Toggle switch
-35|// ---------------------------------------------------------------------------
-36|function Toggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
-37|    return (
-38|        <button
-39|            type="button"
-40|            onClick={onToggle}
-41|            className={`relative inline-flex h-5 w-9 shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 ${on ? "bg-gray-900" : "bg-gray-200"}`}
-42|        >
-43|            <span
-44|                className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow transition-transform duration-200 ${on ? "translate-x-4" : "translate-x-0"}`}
-45|            />
-46|        </button>
-47|    );
-48|}
-49|
-50|// ---------------------------------------------------------------------------
-51|// Simple project picker (input + dropdown)
-52|// ---------------------------------------------------------------------------
-53|function SimpleProjectPicker({
-54|    projects,
-55|    selectedId,
-56|    onSelect,
-57|}: {
-58|    projects: Project[];
-59|    selectedId: string | null;
-60|    onSelect: (id: string | null) => void;
-61|}) {
-62|    const [search, setSearch] = useState("");
-63|    const [open, setOpen] = useState(false);
-64|    const selected = projects.find((p) => p.id === selectedId);
-65|    const filtered = search
-66|        ? projects.filter((p) =>
-67|              p.name.toLowerCase().includes(search.toLowerCase()),
-68|          )
-69|        : projects;
-70|
-71|    return (
-72|        <div className="relative">
-73|            <input
-74|                type="text"
-75|                value={selectedId ? (selected?.name ?? "") : search}
-76|                onChange={(e) => {
-77|                    setSearch(e.target.value);
-78|                    setOpen(true);
-79|                    onSelect(null);
-80|                }}
-81|                onFocus={() => setOpen(true)}
-82|                onBlur={() => setTimeout(() => setOpen(false), 150)}
-83|                placeholder="Select a project…"
-84|                className="w-full text-xs text-gray-700 placeholder:text-gray-400 bg-gray-50 border border-gray-200 rounded-md px-3 py-2 outline-none"
-85|            />
-86|            {selectedId && (
-87|                <button
-88|                    onMouseDown={() => {
-89|                        onSelect(null);
-90|                        setSearch("");
-91|                    }}
-92|                    className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-93|                >
-94|                    <X className="h-3 w-3" />
-95|                </button>
-96|            )}
-97|            {open && !selectedId && (
-98|                <div className="absolute z-10 top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-md shadow-sm overflow-y-auto max-h-40">
-99|                    {filtered.length === 0 ? (
-100|                        <p className="px-3 py-3 text-xs text-gray-400 text-center">
-101|                            No projects found
-102|                        </p>
-103|                    ) : (
-104|                        filtered.map((p) => (
-105|                            <button
-106|                                key={p.id}
-107|                                onMouseDown={() => {
-108|                                    onSelect(p.id);
-109|                                    setSearch("");
-110|                                    setOpen(false);
-111|                                }}
-112|                                className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left hover:bg-gray-50 text-gray-700"
-113|                            >
-114|                                <Folder className="h-3.5 w-3.5 shrink-0 text-gray-400" />
-115|                                {p.name}
-116|                            </button>
-117|                        ))
-118|                    )}
-119|                </div>
-120|            )}
-121|        </div>
-122|    );
-123|}
-124|
-125|// ---------------------------------------------------------------------------
-126|// Shared markdown renderer
-127|// ---------------------------------------------------------------------------
-128|function MarkdownBody({ content }: { content: string }) {
-129|    return (
-130|        <ReactMarkdown
-131|            remarkPlugins={[remarkGfm]}
-132|            components={{
-133|                h1: ({ children }) => (
-134|                    <h1 className="text-base font-semibold text-gray-900 mt-4 mb-1 first:mt-0">
-135|                        {children}
-136|                    </h1>
-137|                ),
-138|                h2: ({ children }) => (
-139|                    <h2 className="text-sm font-semibold text-gray-900 mt-3 mb-1 first:mt-0">
-140|                        {children}
-141|                    </h2>
-142|                ),
-143|                h3: ({ children }) => (
-144|                    <h3 className="text-xs font-semibold text-gray-900 mt-2 mb-0.5 first:mt-0">
-145|                        {children}
-146|                    </h3>
-147|                ),
-148|                p: ({ children }) => (
-149|                    <p className="mb-2 last:mb-0">{children}</p>
-150|                ),
-151|                ul: ({ children }) => (
-152|                    <ul className="list-disc pl-4 mb-2 space-y-0.5">
-153|                        {children}
-154|                    </ul>
-155|                ),
-156|                ol: ({ children }) => (
-157|                    <ol className="list-decimal pl-4 mb-2 space-y-0.5">
-158|                        {children}
-159|                    </ol>
-160|                ),
-161|                li: ({ children }) => <li>{children}</li>,
-162|                strong: ({ children }) => (
-163|                    <strong className="font-semibold text-gray-800">
-164|                        {children}
-165|                    </strong>
-166|                ),
-167|                em: ({ children }) => <em className="italic">{children}</em>,
-168|            }}
-169|        >
-170|            {content}
-171|        </ReactMarkdown>
-172|    );
-173|}
-174|
-175|// ---------------------------------------------------------------------------
-176|// Right panel for assistant workflows (select screen)
-177|// ---------------------------------------------------------------------------
-178|function AssistantPanel({ workflow }: { workflow: Workflow }) {
-179|    return (
-180|        <div className="flex-1 border-l border-t border-gray-200 flex flex-col overflow-hidden px-3 pb-3">
-181|            <div className="py-3 shrink-0">
-182|                <p className="text-xs font-medium text-gray-700">
-183|                    Workflow Prompt
-184|                </p>
-185|            </div>
-186|            <div className="flex-1 overflow-y-auto px-4 py-3 text-sm border border-gray-200 rounded-md text-gray-600 leading-relaxed font-serif bg-gray-50">
-187|                <MarkdownBody
-188|                    content={workflow.prompt_md ?? "_No prompt defined._"}
-189|                />
-190|            </div>
-191|        </div>
-192|    );
-193|}
-194|
-195|// ---------------------------------------------------------------------------
-196|// Right panel for tabular workflows — accordion column list (select screen)
-197|// ---------------------------------------------------------------------------
-198|function TabularPanel({ workflow }: { workflow: Workflow }) {
-199|    const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
-200|    const columns = (workflow.columns_config ?? []).sort(
-201|        (a, b) => a.index - b.index,
-202|    );
-203|
-204|    return (
-205|        <div className="flex-1 border-l border-t border-gray-200 flex flex-col overflow-hidden px-3 pb-3">
-206|            <div className="py-3 shrink-0">
-207|                <p className="text-xs font-medium text-gray-700">Columns</p>
-208|            </div>
-209|            <div className="flex-1 overflow-y-auto border border-gray-200 rounded-md bg-gray-50">
-210|                {columns.length === 0 ? (
-211|                    <p className="px-4 py-6 text-xs text-center text-gray-400">
-212|                        No columns defined
-213|                    </p>
-214|                ) : (
-215|                    columns.map((col) => {
-216|                        const isExpanded = expandedIndex === col.index;
-217|                        const FormatIcon = formatIcon(col.format ?? "text");
-218|                        return (
-219|                            <div
-220|                                key={col.index}
-221|                                className="border-b border-gray-200"
-222|                            >
-223|                                <button
-224|                                    type="button"
-225|                                    onClick={() =>
-226|                                        setExpandedIndex(
-227|                                            isExpanded ? null : col.index,
-228|                                        )
-229|                                    }
-230|                                    className="w-full flex items-center gap-2.5 px-3 py-2.5 text-xs text-left hover:bg-white transition-colors"
-231|                                >
-232|                                    <FormatIcon className="h-3.5 w-3.5 shrink-0 text-gray-400" />
-233|                                    <span className="flex-1 truncate text-gray-800">
-234|                                        {col.name}
-235|                                    </span>
-236|                                    <span className="shrink-0 text-gray-400">
-237|                                        {formatLabel(col.format ?? "text")}
-238|                                    </span>
-239|                                    <ChevronDown
-240|                                        className={`h-3 w-3 shrink-0 text-gray-300 transition-transform duration-150 ${isExpanded ? "rotate-180" : ""}`}
-241|                                    />
-242|                                </button>
-243|                                {isExpanded && (
-244|                                    <div className="px-4 py-3 bg-white border-t border-gray-200 text-sm text-gray-600 leading-relaxed font-serif space-y-3">
-245|                                        {col.tags && col.tags.length > 0 && (
-246|                                            <div>
-247|                                                <p className="text-xs font-medium text-gray-400 mb-1.5 font-sans">
-248|                                                    Tags
-249|                                                </p>
-250|                                                <div className="flex flex-wrap gap-1.5">
-251|                                                    {col.tags.map((tag) => (
-252|                                                        <span
-253|                                                            key={tag}
-254|                                                            className="inline-block rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600 font-sans"
-255|                                                        >
-256|                                                            {tag}
-257|                                                        </span>
-258|                                                    ))}
-259|                                                </div>
-260|                                            </div>
-261|                                        )}
-262|                                        <div>
-263|                                            <p className="text-xs font-medium text-gray-400 mb-1 font-sans">
-264|                                                Prompt
-265|                                            </p>
-266|                                            <MarkdownBody
-267|                                                content={
-268|                                                    col.prompt ||
-269|                                                    "_No prompt defined._"
-270|                                                }
-271|                                            />
-272|                                        </div>
-273|                                    </div>
-274|                                )}
-275|                            </div>
-276|                        );
-277|                    })
-278|                )}
-279|            </div>
-280|        </div>
-281|    );
-282|}
-283|
-284|// ---------------------------------------------------------------------------
-285|// DisplayWorkflowModal
-286|// ---------------------------------------------------------------------------
-287|export function DisplayWorkflowModal({ workflows, workflow, onClose }: Props) {
-288|    const [screen, setScreen] = useState<"select" | "configure">("select");
-289|    const [selected, setSelected] = useState<Workflow | null>(workflow);
-290|    const [listSearch, setListSearch] = useState("");
-291|    const selectedRowRef = useRef<HTMLButtonElement>(null);
-292|
-293|    // Configure screen state
-294|    const [inProject, setInProject] = useState(false);
-295|    const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
-296|        null,
-297|    );
-298|    const [selectedDocIds, setSelectedDocIds] = useState<Set<string>>(
-299|        new Set(),
-300|    );
-301|    const [docSearch, setDocSearch] = useState("");
-302|    const [assistantPrompt, setAssistantPrompt] = useState("");
-303|    const [saving, setSaving] = useState(false);
-304|
-305|    const router = useRouter();
-306|    const { saveChat, setNewChatMessages } = useChatHistoryContext();
-307|    const {
-308|        loading: dirLoading,
-309|        projects,
-310|        standaloneDocuments,
-311|    } = useDirectoryData(screen === "configure");
-312|
-313|    useEffect(() => {
-314|        if (workflow) {
-315|            setSelected(workflow);
-316|            setScreen("select");
-317|            setListSearch("");
-318|        } else {
-319|            setSelected(null);
-320|        }
-321|    }, [workflow?.id]);
-322|
-323|    useEffect(() => {
-324|        if (selected && selectedRowRef.current) {
-325|            selectedRowRef.current.scrollIntoView({ block: "nearest" });
-326|        }
-327|    }, [selected?.id]);
-328|
-329|    // Reset configure state on back
-330|    useEffect(() => {
-331|        if (screen === "select") {
-332|            setInProject(false);
-333|            setSelectedProjectId(null);
-334|            setSelectedDocIds(new Set());
-335|            setDocSearch("");
-336|            setAssistantPrompt("");
-337|        }
-338|    }, [screen]);
-339|
-340|    function handleClose() {
-341|        setSelected(null);
-342|        setScreen("select");
-343|        onClose();
-344|    }
-345|
-346|    if (!workflow) return null;
-347|    const wf = selected ?? workflow;
-348|
-349|    // ---------------------------------------------------------------------------
-350|    // Handlers
-351|    // ---------------------------------------------------------------------------
-352|    async function handleStartChat() {
-353|        setSaving(true);
-354|        try {
-355|            const projectId = inProject ? selectedProjectId! : undefined;
-356|            const chatId = await saveChat(projectId);
-357|            if (!chatId) return;
-358|            const allDocs: Document[] = [
-359|                ...standaloneDocuments,
-360|                ...projects.flatMap((p) => p.documents || []),
-361|            ];
-362|            const files = allDocs
-363|                .filter((d) => selectedDocIds.has(d.id))
-364|                .map((d) => ({
-365|                    filename: d.filename,
-366|                    document_id: d.id,
-367|                }));
-368|            const content = assistantPrompt.trim()
-369|                ? `implement workflow\n\n${assistantPrompt.trim()}`
-370|                : "implement workflow";
-371|            setNewChatMessages([
-372|                {
-373|                    role: "user",
-374|                    content,
-375|                    files: files.length > 0 ? files : undefined,
-376|                },
-377|            ]);
-378|            handleClose();
-379|            router.push(
-380|                projectId
-381|                    ? `/projects/${projectId}/assistant/chat/${chatId}`
-382|                    : `/assistant/chat/${chatId}`,
-383|            );
-384|        } finally {
-385|            setSaving(false);
-386|        }
-387|    }
-388|
-389|    async function handleCreateReview() {
-390|        const allDocs: Document[] = [
-391|            ...standaloneDocuments,
-392|            ...projects.flatMap((p) => p.documents || []),
-393|        ];
-394|        const docIds = allDocs
-395|            .filter((d) => selectedDocIds.has(d.id))
-396|            .map((d) => d.id);
-397|        const projectId = inProject ? selectedProjectId! : undefined;
-398|
-399|        setSaving(true);
-400|        try {
-401|            const review = await createTabularReview({
-402|                title: wf.title,
-403|                document_ids: docIds,
-404|                columns_config: wf.columns_config || [],
-405|                workflow_id: wf.is_system ? undefined : wf.id,
-406|                project_id: projectId,
-407|            });
-408|            handleClose();
-409|            router.push(
-410|                projectId
-411|                    ? `/projects/${projectId}/tabular-reviews/${review.id}`
-412|                    : `/tabular-reviews/${review.id}`,
-413|            );
-414|        } finally {
-415|            setSaving(false);
-416|        }
-417|    }
-418|
-419|    // ---------------------------------------------------------------------------
-420|    // Tabular doc browser helpers
-421|    // ---------------------------------------------------------------------------
-422|    const q = docSearch.toLowerCase().trim();
-423|    const selectedProject = projects.find((p) => p.id === selectedProjectId);
-424|    const projectDocs = selectedProject?.documents ?? [];
-425|
-426|    const filteredProjectDocs = q
-427|        ? projectDocs.filter((d) =>
-428|              d.filename.toLowerCase().includes(q),
-429|          )
-430|        : projectDocs;
-431|
-432|    const filteredStandalone = q
-433|        ? standaloneDocuments.filter((d) =>
-434|              d.filename.toLowerCase().includes(q),
-435|          )
-436|        : standaloneDocuments;
-437|
-438|    const filteredAllProjects = projects
-439|        .map((p) => ({
-440|            ...p,
-441|            documents: (p.documents || []).filter(
-442|                (d) =>
-443|                    !q || d.filename.toLowerCase().includes(q),
-444|            ),
-445|        }))
-446|        .filter(
-447|            (p) =>
-448|                !q ||
-449|                p.name.toLowerCase().includes(q) ||
-450|                p.documents.length > 0,
-451|        );
-452|
-453|    // ---------------------------------------------------------------------------
-454|    // Render
-455|    // ---------------------------------------------------------------------------
-456|    return createPortal(
-457|        <div className="fixed inset-0 z-[101] flex items-center justify-center bg-black/20 backdrop-blur-xs">
-458|            <div
-459|                className={`w-full rounded-2xl bg-white shadow-2xl flex flex-col h-[600px] transition-all duration-200 ${screen === "select" ? "max-w-4xl" : "max-w-2xl"}`}
-460|            >
-461|                {/* Header */}
-462|                <div className="flex items-center justify-between px-5 py-4 shrink-0">
-463|                    <div className="flex items-center gap-1.5 text-xs text-gray-400">
-464|                        {screen === "select" ? (
-465|                            <>
-466|                                <span>Workflows</span>
-467|                                <span>›</span>
-468|                                <span>Select workflow</span>
-469|                            </>
-470|                        ) : (
-471|                            <>
-472|                                <button
-473|                                    onClick={() => setScreen("select")}
-474|                                    className="hover:text-gray-700 transition-colors"
-475|                                >
-476|                                    Workflows
-477|                                </button>
-478|                                <span>›</span>
-479|                                <span className="truncate max-w-[160px]">
-480|                                    {wf.title}
-481|                                </span>
-482|                                <span>›</span>
-483|                                <span>
-484|                                    {wf.type === "assistant"
-485|                                        ? "New Chat"
-486|                                        : "New Review"}
-487|                                </span>
-488|                            </>
-489|                        )}
-490|                    </div>
-491|                    <button
-492|                        onClick={onClose}
-493|                        className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
-494|                    >
-495|                        <X className="h-4 w-4" />
-496|                    </button>
-497|                </div>
-498|
-499|                {/* ── SELECT SCREEN ── */}
-500|                {screen === "select" && (
-501|
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import {
+    ChevronDown,
+    Folder,
+    MessageSquare,
+    Search,
+    Table2,
+    X,
+} from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import type { MikeDocument, MikeWorkflow } from "../shared/types";
+import { createTabularReview } from "@/app/lib/mikeApi";
+import { useRouter } from "next/navigation";
+import { formatIcon, formatLabel } from "../tabular/columnFormat";
+import { useDirectoryData } from "../shared/useDirectoryData";
+import { FileDirectory } from "../shared/FileDirectory";
+import type { MikeProject } from "../shared/types";
+import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
+
+interface Props {
+    workflows: MikeWorkflow[];
+    workflow: MikeWorkflow | null;
+    onClose: () => void;
+}
+
+// ---------------------------------------------------------------------------
+// Toggle switch
+// ---------------------------------------------------------------------------
+function Toggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
+    return (
+        <button
+            type="button"
+            onClick={onToggle}
+            className={`relative inline-flex h-5 w-9 shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 ${on ? "bg-gray-900" : "bg-gray-200"}`}
+        >
+            <span
+                className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow transition-transform duration-200 ${on ? "translate-x-4" : "translate-x-0"}`}
+            />
+        </button>
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Simple project picker (input + dropdown)
+// ---------------------------------------------------------------------------
+function SimpleProjectPicker({
+    projects,
+    selectedId,
+    onSelect,
+}: {
+    projects: MikeProject[];
+    selectedId: string | null;
+    onSelect: (id: string | null) => void;
+}) {
+    const [search, setSearch] = useState("");
+    const [open, setOpen] = useState(false);
+    const selected = projects.find((p) => p.id === selectedId);
+    const filtered = search
+        ? projects.filter((p) =>
+              p.name.toLowerCase().includes(search.toLowerCase()),
+          )
+        : projects;
+
+    return (
+        <div className="relative">
+            <input
+                type="text"
+                value={selectedId ? (selected?.name ?? "") : search}
+                onChange={(e) => {
+                    setSearch(e.target.value);
+                    setOpen(true);
+                    onSelect(null);
+                }}
+                onFocus={() => setOpen(true)}
+                onBlur={() => setTimeout(() => setOpen(false), 150)}
+                placeholder="Select a project…"
+                className="w-full text-xs text-gray-700 placeholder:text-gray-400 bg-gray-50 border border-gray-200 rounded-md px-3 py-2 outline-none"
+            />
+            {selectedId && (
+                <button
+                    onMouseDown={() => {
+                        onSelect(null);
+                        setSearch("");
+                    }}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                >
+                    <X className="h-3 w-3" />
+                </button>
+            )}
+            {open && !selectedId && (
+                <div className="absolute z-10 top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-md shadow-sm overflow-y-auto max-h-40">
+                    {filtered.length === 0 ? (
+                        <p className="px-3 py-3 text-xs text-gray-400 text-center">
+                            No projects found
+                        </p>
+                    ) : (
+                        filtered.map((p) => (
+                            <button
+                                key={p.id}
+                                onMouseDown={() => {
+                                    onSelect(p.id);
+                                    setSearch("");
+                                    setOpen(false);
+                                }}
+                                className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left hover:bg-gray-50 text-gray-700"
+                            >
+                                <Folder className="h-3.5 w-3.5 shrink-0 text-gray-400" />
+                                {p.name}
+                            </button>
+                        ))
+                    )}
+                </div>
+            )}
+        </div>
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Shared markdown renderer
+// ---------------------------------------------------------------------------
+function MarkdownBody({ content }: { content: string }) {
+    return (
+        <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            components={{
+                h1: ({ children }) => (
+                    <h1 className="text-base font-semibold text-gray-900 mt-4 mb-1 first:mt-0">
+                        {children}
+                    </h1>
+                ),
+                h2: ({ children }) => (
+                    <h2 className="text-sm font-semibold text-gray-900 mt-3 mb-1 first:mt-0">
+                        {children}
+                    </h2>
+                ),
+                h3: ({ children }) => (
+                    <h3 className="text-xs font-semibold text-gray-900 mt-2 mb-0.5 first:mt-0">
+                        {children}
+                    </h3>
+                ),
+                p: ({ children }) => (
+                    <p className="mb-2 last:mb-0">{children}</p>
+                ),
+                ul: ({ children }) => (
+                    <ul className="list-disc pl-4 mb-2 space-y-0.5">
+                        {children}
+                    </ul>
+                ),
+                ol: ({ children }) => (
+                    <ol className="list-decimal pl-4 mb-2 space-y-0.5">
+                        {children}
+                    </ol>
+                ),
+                li: ({ children }) => <li>{children}</li>,
+                strong: ({ children }) => (
+                    <strong className="font-semibold text-gray-800">
+                        {children}
+                    </strong>
+                ),
+                em: ({ children }) => <em className="italic">{children}</em>,
+            }}
+        >
+            {content}
+        </ReactMarkdown>
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Right panel for assistant workflows (select screen)
+// ---------------------------------------------------------------------------
+function AssistantPanel({ workflow }: { workflow: MikeWorkflow }) {
+    return (
+        <div className="flex-1 border-l border-t border-gray-200 flex flex-col overflow-hidden px-3 pb-3">
+            <div className="py-3 shrink-0">
+                <p className="text-xs font-medium text-gray-700">
+                    Workflow Prompt
+                </p>
+            </div>
+            <div className="flex-1 overflow-y-auto px-4 py-3 text-sm border border-gray-200 rounded-md text-gray-600 leading-relaxed font-serif bg-gray-50">
+                <MarkdownBody
+                    content={workflow.prompt_md ?? "_No prompt defined._"}
+                />
+            </div>
+        </div>
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Right panel for tabular workflows — accordion column list (select screen)
+// ---------------------------------------------------------------------------
+function TabularPanel({ workflow }: { workflow: MikeWorkflow }) {
+    const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
+    const columns = (workflow.columns_config ?? []).sort(
+        (a, b) => a.index - b.index,
+    );
+
+    return (
+        <div className="flex-1 border-l border-t border-gray-200 flex flex-col overflow-hidden px-3 pb-3">
+            <div className="py-3 shrink-0">
+                <p className="text-xs font-medium text-gray-700">Columns</p>
+            </div>
+            <div className="flex-1 overflow-y-auto border border-gray-200 rounded-md bg-gray-50">
+                {columns.length === 0 ? (
+                    <p className="px-4 py-6 text-xs text-center text-gray-400">
+                        No columns defined
+                    </p>
+                ) : (
+                    columns.map((col) => {
+                        const isExpanded = expandedIndex === col.index;
+                        const FormatIcon = formatIcon(col.format ?? "text");
+                        return (
+                            <div
+                                key={col.index}
+                                className="border-b border-gray-200"
+                            >
+                                <button
+                                    type="button"
+                                    onClick={() =>
+                                        setExpandedIndex(
+                                            isExpanded ? null : col.index,
+                                        )
+                                    }
+                                    className="w-full flex items-center gap-2.5 px-3 py-2.5 text-xs text-left hover:bg-white transition-colors"
+                                >
+                                    <FormatIcon className="h-3.5 w-3.5 shrink-0 text-gray-400" />
+                                    <span className="flex-1 truncate text-gray-800">
+                                        {col.name}
+                                    </span>
+                                    <span className="shrink-0 text-gray-400">
+                                        {formatLabel(col.format ?? "text")}
+                                    </span>
+                                    <ChevronDown
+                                        className={`h-3 w-3 shrink-0 text-gray-300 transition-transform duration-150 ${isExpanded ? "rotate-180" : ""}`}
+                                    />
+                                </button>
+                                {isExpanded && (
+                                    <div className="px-4 py-3 bg-white border-t border-gray-200 text-sm text-gray-600 leading-relaxed font-serif space-y-3">
+                                        {col.tags && col.tags.length > 0 && (
+                                            <div>
+                                                <p className="text-xs font-medium text-gray-400 mb-1.5 font-sans">
+                                                    Tags
+                                                </p>
+                                                <div className="flex flex-wrap gap-1.5">
+                                                    {col.tags.map((tag) => (
+                                                        <span
+                                                            key={tag}
+                                                            className="inline-block rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600 font-sans"
+                                                        >
+                                                            {tag}
+                                                        </span>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
+                                        <div>
+                                            <p className="text-xs font-medium text-gray-400 mb-1 font-sans">
+                                                Prompt
+                                            </p>
+                                            <MarkdownBody
+                                                content={
+                                                    col.prompt ||
+                                                    "_No prompt defined._"
+                                                }
+                                            />
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    })
+                )}
+            </div>
+        </div>
+    );
+}
+
+// ---------------------------------------------------------------------------
+// DisplayWorkflowModal
+// ---------------------------------------------------------------------------
+export function DisplayWorkflowModal({ workflows, workflow, onClose }: Props) {
+    const [screen, setScreen] = useState<"select" | "configure">("select");
+    const [selected, setSelected] = useState<MikeWorkflow | null>(workflow);
+    const [listSearch, setListSearch] = useState("");
+    const selectedRowRef = useRef<HTMLButtonElement>(null);
+
+    // Configure screen state
+    const [inProject, setInProject] = useState(false);
+    const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
+        null,
+    );
+    const [selectedDocIds, setSelectedDocIds] = useState<Set<string>>(
+        new Set(),
+    );
+    const [docSearch, setDocSearch] = useState("");
+    const [assistantPrompt, setAssistantPrompt] = useState("");
+    const [saving, setSaving] = useState(false);
+
+    const router = useRouter();
+    const { saveChat, setNewChatMessages } = useChatHistoryContext();
+    const {
+        loading: dirLoading,
+        projects,
+        standaloneDocuments,
+    } = useDirectoryData(screen === "configure");
+
+    useEffect(() => {
+        if (workflow) {
+            setSelected(workflow);
+            setScreen("select");
+            setListSearch("");
+        } else {
+            setSelected(null);
+        }
+    }, [workflow?.id]);
+
+    useEffect(() => {
+        if (selected && selectedRowRef.current) {
+            selectedRowRef.current.scrollIntoView({ block: "nearest" });
+        }
+    }, [selected?.id]);
+
+    // Reset configure state on back
+    useEffect(() => {
+        if (screen === "select") {
+            setInProject(false);
+            setSelectedProjectId(null);
+            setSelectedDocIds(new Set());
+            setDocSearch("");
+            setAssistantPrompt("");
+        }
+    }, [screen]);
+
+    function handleClose() {
+        setSelected(null);
+        setScreen("select");
+        onClose();
+    }
+
+    if (!workflow) return null;
+    const wf = selected ?? workflow;
+
+    // ---------------------------------------------------------------------------
+    // Handlers
+    // ---------------------------------------------------------------------------
+    async function handleStartChat() {
+        setSaving(true);
+        try {
+            const projectId = inProject ? selectedProjectId! : undefined;
+            const chatId = await saveChat(projectId);
+            if (!chatId) return;
+            const allDocs: MikeDocument[] = [
+                ...standaloneDocuments,
+                ...projects.flatMap((p) => p.documents || []),
+            ];
+            const files = allDocs
+                .filter((d) => selectedDocIds.has(d.id))
+                .map((d) => ({ filename: d.filename, document_id: d.id }));
+            const content = assistantPrompt.trim()
+                ? `implement workflow\n\n${assistantPrompt.trim()}`
+                : "implement workflow";
+            setNewChatMessages([
+                {
+                    role: "user",
+                    content,
+                    files: files.length > 0 ? files : undefined,
+                },
+            ]);
+            handleClose();
+            router.push(
+                projectId
+                    ? `/projects/${projectId}/assistant/chat/${chatId}`
+                    : `/assistant/chat/${chatId}`,
+            );
+        } finally {
+            setSaving(false);
+        }
+    }
+
+    async function handleCreateReview() {
+        const allDocs: MikeDocument[] = [
+            ...standaloneDocuments,
+            ...projects.flatMap((p) => p.documents || []),
+        ];
+        const docIds = allDocs
+            .filter((d) => selectedDocIds.has(d.id))
+            .map((d) => d.id);
+        const projectId = inProject ? selectedProjectId! : undefined;
+
+        setSaving(true);
+        try {
+            const review = await createTabularReview({
+                title: wf.title,
+                document_ids: docIds,
+                columns_config: wf.columns_config || [],
+                workflow_id: wf.is_system ? undefined : wf.id,
+                project_id: projectId,
+            });
+            handleClose();
+            router.push(
+                projectId
+                    ? `/projects/${projectId}/tabular-reviews/${review.id}`
+                    : `/tabular-reviews/${review.id}`,
+            );
+        } finally {
+            setSaving(false);
+        }
+    }
+
+    // ---------------------------------------------------------------------------
+    // Tabular doc browser helpers
+    // ---------------------------------------------------------------------------
+    const q = docSearch.toLowerCase().trim();
+    const selectedProject = projects.find((p) => p.id === selectedProjectId);
+    const projectDocs = selectedProject?.documents ?? [];
+
+    const filteredProjectDocs = q
+        ? projectDocs.filter((d) => d.filename.toLowerCase().includes(q))
+        : projectDocs;
+
+    const filteredStandalone = q
+        ? standaloneDocuments.filter((d) =>
+              d.filename.toLowerCase().includes(q),
+          )
+        : standaloneDocuments;
+
+    const filteredAllProjects = projects
+        .map((p) => ({
+            ...p,
+            documents: (p.documents || []).filter(
+                (d) => !q || d.filename.toLowerCase().includes(q),
+            ),
+        }))
+        .filter(
+            (p) =>
+                !q ||
+                p.name.toLowerCase().includes(q) ||
+                p.documents.length > 0,
+        );
+
+    // ---------------------------------------------------------------------------
+    // Render
+    // ---------------------------------------------------------------------------
+    return createPortal(
+        <div className="fixed inset-0 z-[101] flex items-center justify-center bg-black/20 backdrop-blur-xs">
+            <div
+                className={`w-full rounded-2xl bg-white shadow-2xl flex flex-col h-[600px] transition-all duration-200 ${screen === "select" ? "max-w-4xl" : "max-w-2xl"}`}
+            >
+                {/* Header */}
+                <div className="flex items-center justify-between px-5 py-4 shrink-0">
+                    <div className="flex items-center gap-1.5 text-xs text-gray-400">
+                        {screen === "select" ? (
+                            <>
+                                <span>Workflows</span>
+                                <span>›</span>
+                                <span>Select workflow</span>
+                            </>
+                        ) : (
+                            <>
+                                <button
+                                    onClick={() => setScreen("select")}
+                                    className="hover:text-gray-700 transition-colors"
+                                >
+                                    Workflows
+                                </button>
+                                <span>›</span>
+                                <span className="truncate max-w-[160px]">
+                                    {wf.title}
+                                </span>
+                                <span>›</span>
+                                <span>
+                                    {wf.type === "assistant"
+                                        ? "New Chat"
+                                        : "New Review"}
+                                </span>
+                            </>
+                        )}
+                    </div>
+                    <button
+                        onClick={onClose}
+                        className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+                    >
+                        <X className="h-4 w-4" />
+                    </button>
+                </div>
+
+                {/* ── SELECT SCREEN ── */}
+                {screen === "select" && (
+                    <>
+                        <div className="flex flex-row flex-1 min-h-0 overflow-hidden">
+                            {/* Left: workflow list */}
+                            <div className="w-80 shrink-0 flex flex-col border-t border-gray-200">
+                                {/* Search */}
+                                <div className="px-3 py-2 shrink-0 border-b border-gray-100">
+                                    <div className="flex items-center gap-1.5 rounded-md border border-gray-200 bg-gray-50 px-2.5 py-1">
+                                        <Search className="h-3 w-3 text-gray-400 shrink-0" />
+                                        <input
+                                            type="text"
+                                            placeholder="Search…"
+                                            value={listSearch}
+                                            onChange={(e) => setListSearch(e.target.value)}
+                                            className="flex-1 bg-transparent text-xs text-gray-700 placeholder:text-gray-400 outline-none"
+                                        />
+                                        {listSearch && (
+                                            <button onClick={() => setListSearch("")} className="text-gray-400 hover:text-gray-600">
+                                                <X className="h-3 w-3" />
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
+                                {/* List */}
+                                <div className="overflow-y-auto flex-1">
+                                    {workflows
+                                        .filter((wfItem) => !listSearch || wfItem.title.toLowerCase().includes(listSearch.toLowerCase()))
+                                        .map((wfItem) => {
+                                            const isSelected = selected?.id === wfItem.id;
+                                            const Icon = wfItem.type === "tabular" ? Table2 : MessageSquare;
+                                            return (
+                                                <button
+                                                    key={wfItem.id}
+                                                    ref={isSelected ? selectedRowRef : null}
+                                                    type="button"
+                                                    onClick={() => setSelected(wfItem)}
+                                                    className={`w-full flex items-center gap-3 px-4 py-3 text-xs text-left border-b border-gray-200 transition-colors ${isSelected ? "bg-gray-100" : "hover:bg-gray-50"}`}
+                                                >
+                                                    <span className={`flex-1 truncate ${isSelected ? "text-gray-900 font-medium" : "text-gray-700"}`}>
+                                                        {wfItem.title}
+                                                    </span>
+                                                    <Icon className="h-3.5 w-3.5 shrink-0 text-gray-400" />
+                                                </button>
+                                            );
+                                        })}
+                                </div>
+                            </div>
+
+                            {/* Right: workflow detail */}
+                            {wf.type === "assistant" ? (
+                                <AssistantPanel key={wf.id} workflow={wf} />
+                            ) : (
+                                <TabularPanel key={wf.id} workflow={wf} />
+                            )}
+                        </div>
+
+                        <div className="border-t border-gray-200 px-5 py-3 flex items-center justify-between shrink-0">
+                            {wf.is_system ? (
+                                <button
+                                    onClick={() => {
+                                        router.push(`/workflows/${wf.id}`);
+                                        handleClose();
+                                    }}
+                                    className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-500 hover:bg-gray-50 transition-colors"
+                                >
+                                    View Page
+                                </button>
+                            ) : (
+                                <button
+                                    onClick={() => {
+                                        router.push(`/workflows/${wf.id}`);
+                                        handleClose();
+                                    }}
+                                    className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-500 hover:bg-gray-50 transition-colors"
+                                >
+                                    Edit
+                                </button>
+                            )}
+                            <button
+                                onClick={() => setScreen("configure")}
+                                className="rounded-lg bg-gray-900 px-5 py-2 text-sm font-medium text-white hover:bg-gray-700"
+                            >
+                                Use
+                            </button>
+                        </div>
+                    </>
+                )}
+
+                {/* ── ASSISTANT CONFIGURE SCREEN ── */}
+                {screen === "configure" && wf.type === "assistant" && (
+                    <>
+                        <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+                            {/* Add-on prompt */}
+                            <div className="px-5 pb-3 shrink-0">
+                                <p className="text-xs font-medium text-gray-700 mb-2">
+                                    Message (optional)
+                                </p>
+                                <textarea
+                                    rows={3}
+                                    value={assistantPrompt}
+                                    onChange={(e) =>
+                                        setAssistantPrompt(e.target.value)
+                                    }
+                                    placeholder="Add any additional instructions to the workflow prompt…"
+                                    className="w-full text-sm text-gray-700 placeholder:text-gray-400 bg-gray-50 border border-gray-200 rounded-md px-3 py-2 resize-none outline-none leading-relaxed"
+                                />
+                            </div>
+
+                            {/* Toggle row */}
+                            <div className="px-5 py-3 flex flex-col gap-2 shrink-0">
+                                <span className="text-xs font-medium text-gray-700">
+                                    Create in a project
+                                </span>
+                                <Toggle
+                                    on={inProject}
+                                    onToggle={() => {
+                                        setInProject(!inProject);
+                                        setSelectedProjectId(null);
+                                        setSelectedDocIds(new Set());
+                                        setDocSearch("");
+                                    }}
+                                />
+                            </div>
+
+                            {inProject ? (
+                                <>
+                                    <div className="px-5 pt-1 pb-1 shrink-0">
+                                        <p className="text-xs font-medium text-gray-700">
+                                            Select project
+                                        </p>
+                                    </div>
+                                    <div className="px-5 pb-2 shrink-0">
+                                        <SimpleProjectPicker
+                                            projects={projects}
+                                            selectedId={selectedProjectId}
+                                            onSelect={setSelectedProjectId}
+                                        />
+                                    </div>
+                                </>
+                            ) : (
+                                <>
+                                    <div className="px-5 pt-1 pb-1 shrink-0">
+                                        <p className="text-xs font-medium text-gray-700">
+                                            Select documents
+                                        </p>
+                                    </div>
+
+                                    {/* Search */}
+                                    <div className="px-4 pt-1.5 pb-1 shrink-0">
+                                        <div className="flex items-center gap-1.5 rounded-md border border-gray-200 bg-gray-50 px-2.5 py-1">
+                                            <Search className="h-3 w-3 text-gray-400 shrink-0" />
+                                            <input
+                                                type="text"
+                                                placeholder="Search…"
+                                                value={docSearch}
+                                                onChange={(e) =>
+                                                    setDocSearch(e.target.value)
+                                                }
+                                                className="flex-1 bg-transparent text-xs text-gray-700 placeholder:text-gray-400 outline-none"
+                                            />
+                                            {docSearch && (
+                                                <button
+                                                    onClick={() =>
+                                                        setDocSearch("")
+                                                    }
+                                                    className="text-gray-400 hover:text-gray-600"
+                                                >
+                                                    <X className="h-3 w-3" />
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    {/* File browser */}
+                                    <div className="flex-1 overflow-y-auto px-4 pb-2">
+                                        <FileDirectory
+                                            standaloneDocs={filteredStandalone}
+                                            directoryProjects={
+                                                filteredAllProjects
+                                            }
+                                            loading={dirLoading}
+                                            selectedIds={selectedDocIds}
+                                            onChange={setSelectedDocIds}
+                                            allowMultiple
+                                            forceExpanded={!!q}
+                                            emptyMessage={
+                                                q
+                                                    ? "No matches found"
+                                                    : "No documents yet"
+                                            }
+                                        />
+                                    </div>
+                                </>
+                            )}
+                        </div>
+
+                        <div className="border-t border-gray-200 px-5 py-3 flex items-center justify-between shrink-0">
+                            <span className="text-xs text-gray-400">
+                                {!inProject && selectedDocIds.size > 0
+                                    ? `${selectedDocIds.size} selected`
+                                    : ""}
+                            </span>
+                            <button
+                                onClick={handleStartChat}
+                                disabled={
+                                    saving || (inProject && !selectedProjectId)
+                                }
+                                className="rounded-lg bg-gray-900 px-5 py-2 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50"
+                            >
+                                {saving ? "Starting…" : "Start Chat"}
+                            </button>
+                        </div>
+                    </>
+                )}
+
+                {/* ── TABULAR CONFIGURE SCREEN ── */}
+                {screen === "configure" && wf.type === "tabular" && (
+                    <>
+                        <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+                            {/* Toggle stacked */}
+                            <div className="px-5 pb-3 flex flex-col gap-2 shrink-0">
+                                <span className="text-xs font-medium text-gray-700">
+                                    Create in a project
+                                </span>
+                                <Toggle
+                                    on={inProject}
+                                    onToggle={() => {
+                                        setInProject(!inProject);
+                                        setSelectedProjectId(null);
+                                        setDocSearch("");
+                                        setSelectedDocIds(new Set());
+                                    }}
+                                />
+                            </div>
+
+                            {/* Project section */}
+                            {inProject && (
+                                <>
+                                    <div className="px-5 pt-1 pb-1 shrink-0">
+                                        <p className="text-xs font-medium text-gray-700">
+                                            Select Project
+                                        </p>
+                                    </div>
+                                    <div className="px-5 pb-2 shrink-0">
+                                        <SimpleProjectPicker
+                                            projects={projects}
+                                            selectedId={selectedProjectId}
+                                            onSelect={(id) => {
+                                                setSelectedProjectId(id);
+                                                if (!id)
+                                                    setSelectedDocIds(
+                                                        new Set(),
+                                                    );
+                                            }}
+                                        />
+                                    </div>
+                                </>
+                            )}
+
+                            {/* Documents section */}
+                            <div className="px-5 pt-3 pb-1 shrink-0">
+                                <p className="text-xs font-medium text-gray-700">
+                                    Select Documents
+                                </p>
+                            </div>
+
+                            {/* Search */}
+                            <div className="px-4 pt-1.5 pb-1 shrink-0">
+                                <div className="flex items-center gap-1.5 rounded-md border border-gray-200 bg-gray-50 px-2.5 py-1">
+                                    <Search className="h-3 w-3 text-gray-400 shrink-0" />
+                                    <input
+                                        type="text"
+                                        placeholder="Search…"
+                                        value={docSearch}
+                                        onChange={(e) =>
+                                            setDocSearch(e.target.value)
+                                        }
+                                        className="flex-1 bg-transparent text-xs text-gray-700 placeholder:text-gray-400 outline-none"
+                                    />
+                                    {docSearch && (
+                                        <button
+                                            onClick={() => setDocSearch("")}
+                                            className="text-gray-400 hover:text-gray-600"
+                                        >
+                                            <X className="h-3 w-3" />
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* File browser */}
+                            <div className="flex-1 overflow-y-auto px-4 pb-2">
+                                <FileDirectory
+                                    standaloneDocs={
+                                        inProject
+                                            ? filteredProjectDocs
+                                            : filteredStandalone
+                                    }
+                                    directoryProjects={
+                                        inProject ? [] : filteredAllProjects
+                                    }
+                                    loading={dirLoading}
+                                    selectedIds={selectedDocIds}
+                                    onChange={setSelectedDocIds}
+                                    allowMultiple
+                                    forceExpanded={!!q || inProject}
+                                    emptyMessage={
+                                        q
+                                            ? "No matches found"
+                                            : inProject
+                                              ? "No documents in this project"
+                                              : "No documents yet"
+                                    }
+                                />
+                            </div>
+                        </div>
+
+                        <div className="border-t border-gray-200 px-5 py-3 flex items-center justify-between shrink-0">
+                            <span className="text-xs text-gray-400">
+                                {selectedDocIds.size > 0
+                                    ? `${selectedDocIds.size} selected`
+                                    : ""}
+                            </span>
+                            <button
+                                onClick={handleCreateReview}
+                                disabled={
+                                    saving ||
+                                    selectedDocIds.size === 0 ||
+                                    (inProject && !selectedProjectId)
+                                }
+                                className="rounded-lg bg-gray-900 px-5 py-2 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50"
+                            >
+                                {saving ? "Creating…" : "Create Review"}
+                            </button>
+                        </div>
+                    </>
+                )}
+            </div>
+        </div>,
+        document.body,
+    );
+}
