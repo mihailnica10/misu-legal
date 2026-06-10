@@ -1251,6 +1251,104 @@ wr.delete('/:workflowId/shares/:shareId', requireAuth, async (c) => {
 app.route('/workflows', wr);
 
 // -----------------------------------------------------------------------
+// Tabular Reviews (new CRUD routes under /tabular)
+// -----------------------------------------------------------------------
+const tabularRoutes = new Hono<{ Bindings: Env }>();
+
+// GET /tabular/reviews — list user's reviews
+tabularRoutes.get('/reviews', requireAuth, async (c) => {
+  const db = getDb(c.env.DB);
+  const userId = c.get('userId');
+  return c.json(await db.select().from(schema.tabularReviews)
+    .where(eq(schema.tabularReviews.userId, userId))
+    .orderBy(desc(schema.tabularReviews.createdAt)).all());
+});
+
+// POST /tabular/reviews — create
+tabularRoutes.post('/reviews', requireAuth, async (c) => {
+  const db = getDb(c.env.DB);
+  const userId = c.get('userId');
+  const body = await c.req.json();
+  const review = await db.insert(schema.tabularReviews).values({
+    userId, title: body.title, projectId: body.projectId,
+    columnsConfig: body.columnsConfig ? JSON.stringify(body.columnsConfig) : undefined,
+    documentIds: body.documentIds ? JSON.stringify(body.documentIds) : undefined,
+    workflowId: body.workflowId, practice: body.practice,
+  }).returning().get();
+  return c.json(review, 201);
+});
+
+// GET /tabular/reviews/:id
+tabularRoutes.get('/reviews/:id', requireAuth, async (c) => {
+  const db = getDb(c.env.DB);
+  const review = await db.select().from(schema.tabularReviews)
+    .where(eq(schema.tabularReviews.id, c.req.param('id'))).get();
+  if (!review) return c.json({ error: 'Not found' }, 404);
+  const cells = await db.select().from(schema.tabularCells)
+    .where(eq(schema.tabularCells.reviewId, review.id)).all();
+  return c.json({ ...review, cells });
+});
+
+// PATCH /tabular/reviews/:id
+tabularRoutes.patch('/reviews/:id', requireAuth, async (c) => {
+  const db = getDb(c.env.DB);
+  const body = await c.req.json();
+  const updated = await db.update(schema.tabularReviews).set({ ...body, updatedAt: Date.now() })
+    .where(eq(schema.tabularReviews.id, c.req.param('id'))).returning().get();
+  if (!updated) return c.json({ error: 'Not found' }, 404);
+  return c.json(updated);
+});
+
+// DELETE /tabular/reviews/:id
+tabularRoutes.delete('/reviews/:id', requireAuth, async (c) => {
+  const db = getDb(c.env.DB);
+  await db.delete(schema.tabularReviews).where(eq(schema.tabularReviews.id, c.req.param('id'))).run();
+  return c.json({ ok: true });
+});
+
+// POST /tabular/reviews/:id/cells — update cell content
+tabularRoutes.post('/reviews/:id/cells', requireAuth, async (c) => {
+  const db = getDb(c.env.DB);
+  const body = await c.req.json();
+  const { cells } = body as { cells: Array<{ documentId: string; columnIndex: number; content?: string; citations?: string; status?: string }> };
+  if (!cells?.length) return c.json({ error: 'cells required' }, 400);
+  const reviewId = c.req.param('id');
+  const results = [];
+  for (const cell of cells) {
+    const existing = await db.select().from(schema.tabularCells)
+      .where(and(eq(schema.tabularCells.reviewId, reviewId), eq(schema.tabularCells.documentId, cell.documentId), eq(schema.tabularCells.columnIndex, cell.columnIndex))).get();
+    if (existing) {
+      results.push(await db.update(schema.tabularCells).set({ content: cell.content, citations: cell.citations, status: (cell.status as any) || 'pending' })
+        .where(eq(schema.tabularCells.id, existing.id)).returning().get());
+    } else {
+      results.push(await db.insert(schema.tabularCells).values({ reviewId, documentId: cell.documentId, columnIndex: cell.columnIndex, content: cell.content, citations: cell.citations, status: (cell.status as any) || 'pending' }).returning().get());
+    }
+  }
+  return c.json(results);
+});
+
+// Tabular review chats
+tabularRoutes.get('/reviews/:id/chats', requireAuth, async (c) => {
+  const db = getDb(c.env.DB);
+  return c.json(await db.select().from(schema.tabularReviewChats)
+    .where(eq(schema.tabularReviewChats.reviewId, c.req.param('id')))
+    .orderBy(desc(schema.tabularReviewChats.createdAt)).all());
+});
+
+tabularRoutes.get('/reviews/:id/chats/:chatId', requireAuth, async (c) => {
+  const db = getDb(c.env.DB);
+  const chat = await db.select().from(schema.tabularReviewChats)
+    .where(eq(schema.tabularReviewChats.id, c.req.param('chatId'))).get();
+  if (!chat) return c.json({ error: 'Not found' }, 404);
+  const messages = await db.select().from(schema.tabularReviewChatMessages)
+    .where(eq(schema.tabularReviewChatMessages.chatId, chat.id))
+    .orderBy(schema.tabularReviewChatMessages.createdAt).all();
+  return c.json({ ...chat, messages });
+});
+
+app.route('/tabular', tabularRoutes);
+
+// -----------------------------------------------------------------------
 // CaseLaw
 // -----------------------------------------------------------------------
 app.post('/case-law/case-opinions', requireAuth, async (c) => {
@@ -1366,6 +1464,651 @@ app.post('/api/chat/stream', requireAuth, async (c) => {
     console.error('[chat/stream] error:', e);
     return c.json({ error: e.message || 'Stream error' }, 500);
   }
+});
+
+// -----------------------------------------------------------------------
+// Tabular Reviews
+// -----------------------------------------------------------------------
+const tr = new Hono<AppBindings>();
+
+// GET /tabular-review
+tr.get('/', requireAuth, async (c) => {
+  const db = getDb(c.env.DB);
+  const userId = c.get('userId');
+  const projectId = c.req.query('project_id') || null;
+
+  // Own reviews + reviews in projects user has access to
+  // For simplicity, fetch own reviews + reviews in user's projects
+  const ownReviews = await db.select().from(schema.tabularReviews)
+    .where(eq(schema.tabularReviews.userId, userId))
+    .orderBy(desc(schema.tabularReviews.createdAt))
+    .all();
+
+  // Also fetch reviews in user's projects
+  const myProjects = await db.select({ id: schema.projects.id })
+    .from(schema.projects)
+    .where(eq(schema.projects.userId, userId))
+    .all();
+  const myProjectIds = myProjects.map((p: any) => p.id);
+
+  let sharedReviews: any[] = [];
+  if (myProjectIds.length > 0) {
+    let q: any = db.select().from(schema.tabularReviews)
+      .where(inArray(schema.tabularReviews.projectId, myProjectIds));
+    if (projectId) q = q.where(eq(schema.tabularReviews.projectId, projectId));
+    sharedReviews = await q.orderBy(desc(schema.tabularReviews.createdAt)).all();
+  }
+
+  // Filter by project_id if specified
+  const allReviews = projectId
+    ? [...ownReviews, ...sharedReviews].filter(
+        (r: any) => r.projectId === projectId || (projectId && r.projectId === null && false)
+      )
+    : [...ownReviews, ...sharedReviews];
+
+  // Deduplicate
+  const seen = new Set<string>();
+  const reviews: any[] = [];
+  for (const r of allReviews) {
+    if (seen.has(r.id)) continue;
+    seen.add(r.id);
+    reviews.push(r);
+  }
+
+  // Get document counts per review
+  const reviewIds = reviews.map((r: any) => r.id);
+  let docCounts: Record<string, number> = {};
+  if (reviewIds.length > 0) {
+    const cells = await db.select()
+      .from(schema.tabularCells)
+      .where(inArray(schema.tabularCells.reviewId, reviewIds))
+      .all();
+    const docCountMap = new Map<string, Set<string>>();
+    for (const cell of cells) {
+      if (!docCountMap.has(cell.reviewId)) docCountMap.set(cell.reviewId, new Set());
+      docCountMap.get(cell.reviewId)!.add(cell.documentId);
+    }
+    for (const [reviewId, docs] of docCountMap) {
+      docCounts[reviewId] = docs.size;
+    }
+  }
+
+  return c.json(reviews.map((r: any) => ({ ...r, document_count: docCounts[r.id] || 0 })));
+});
+
+// POST /tabular-review — create review
+tr.post('/', requireAuth, async (c) => {
+  const db = getDb(c.env.DB);
+  const userId = c.get('userId');
+  const body = await c.req.json();
+  const { title, document_ids, columns_config, workflow_id, project_id } = body;
+
+  if (!Array.isArray(document_ids) || document_ids.length === 0) {
+    return c.json({ error: 'document_ids is required' }, 400);
+  }
+  if (!Array.isArray(columns_config) || columns_config.length === 0) {
+    return c.json({ error: 'columns_config is required' }, 400);
+  }
+
+  // Verify document access
+  const myDocs = await db.select({ id: schema.documents.id })
+    .from(schema.documents)
+    .where(and(
+      inArray(schema.documents.id, document_ids),
+      eq(schema.documents.userId, userId)
+    ))
+    .all();
+  const allowedIds = myDocs.map((d: any) => d.id);
+
+  if (allowedIds.length === 0) {
+    return c.json({ error: 'No accessible documents' }, 400);
+  }
+
+  const review = await db.insert(schema.tabularReviews).values({
+    userId,
+    title: title || null,
+    columnsConfig: JSON.stringify(columns_config),
+    documentIds: JSON.stringify(allowedIds),
+    projectId: project_id || null,
+    workflowId: workflow_id || null,
+  }).returning().get();
+
+  // Create cells
+  const cells = allowedIds.flatMap((docId: string) =>
+    columns_config.map((col: any) => ({
+      reviewId: review.id,
+      documentId: docId,
+      columnIndex: col.index,
+      status: 'pending' as const,
+    }))
+  );
+  if (cells.length > 0) {
+    await db.insert(schema.tabularCells).values(cells).run();
+  }
+
+  return c.json(review, 201);
+});
+
+// GET /tabular-review/:reviewId
+tr.get('/:reviewId', requireAuth, async (c) => {
+  const db = getDb(c.env.DB);
+  const reviewId = c.req.param('reviewId');
+  const review = await db.select().from(schema.tabularReviews)
+    .where(eq(schema.tabularReviews.id, reviewId)).get();
+  if (!review) return c.json({ error: 'Not found' }, 404);
+
+  const cells = await db.select().from(schema.tabularCells)
+    .where(eq(schema.tabularCells.reviewId, reviewId))
+    .orderBy(schema.tabularCells.columnIndex)
+    .all();
+
+  return c.json({ ...review, cells });
+});
+
+// DELETE /tabular-review/:reviewId
+tr.delete('/:reviewId', requireAuth, async (c) => {
+  const db = getDb(c.env.DB);
+  const userId = c.get('userId');
+  const reviewId = c.req.param('reviewId');
+
+  const review = await db.select().from(schema.tabularReviews)
+    .where(and(eq(schema.tabularReviews.id, reviewId), eq(schema.tabularReviews.userId, userId))).get();
+  if (!review) return c.json({ error: 'Not found' }, 404);
+
+  await db.delete(schema.tabularReviews).where(eq(schema.tabularReviews.id, reviewId)).run();
+  return c.body(null, 204);
+});
+
+// PATCH /tabular-review/:reviewId
+tr.patch('/:reviewId', requireAuth, async (c) => {
+  const db = getDb(c.env.DB);
+  const userId = c.get('userId');
+  const reviewId = c.req.param('reviewId');
+  const body = await c.req.json();
+
+  const review = await db.select().from(schema.tabularReviews)
+    .where(and(eq(schema.tabularReviews.id, reviewId), eq(schema.tabularReviews.userId, userId))).get();
+  if (!review) return c.json({ error: 'Not found' }, 404);
+
+  const updates: Record<string, any> = { updatedAt: new Date().toISOString() };
+  if (body.title !== undefined) updates.title = body.title;
+  if (body.columnsConfig !== undefined) updates.columnsConfig = JSON.stringify(body.columnsConfig);
+  if (body.documentIds !== undefined) updates.documentIds = JSON.stringify(body.documentIds);
+  if (body.practice !== undefined) updates.practice = body.practice ?? null;
+
+  const updated = await db.update(schema.tabularReviews)
+    .set(updates)
+    .where(eq(schema.tabularReviews.id, reviewId))
+    .returning().get();
+  return c.json(updated);
+});
+
+// GET /tabular-review/:reviewId/people
+tr.get('/:reviewId/people', requireAuth, async (c) => {
+  const db = getDb(c.env.DB);
+  const reviewId = c.req.param('reviewId');
+  const review = await db.select().from(schema.tabularReviews)
+    .where(eq(schema.tabularReviews.id, reviewId)).get();
+  if (!review) return c.json({ error: 'Not found' }, 404);
+
+  let sharedWith: string[] = [];
+  try { sharedWith = JSON.parse(review.sharedWith || '[]'); } catch {}
+
+  return c.json({
+    owner: { userId: review.userId, email: null, displayName: null },
+    members: sharedWith.map((email: string) => ({ email, displayName: null })),
+  });
+});
+
+// PATCH /tabular-review/:reviewId/cells/:cellId
+tr.patch('/:reviewId/cells/:cellId', requireAuth, async (c) => {
+  const db = getDb(c.env.DB);
+  const reviewId = c.req.param('reviewId');
+  const cellId = c.req.param('cellId');
+  const body = await c.req.json();
+
+  const updates: Record<string, any> = {};
+  if (body.content !== undefined) updates.content = body.content;
+  if (body.citations !== undefined) updates.citations = body.citations;
+  if (body.status !== undefined) updates.status = body.status;
+
+  const updated = await db.update(schema.tabularCells)
+    .set(updates)
+    .where(and(eq(schema.tabularCells.id, cellId), eq(schema.tabularCells.reviewId, reviewId)))
+    .returning().get();
+  if (!updated) return c.json({ error: 'Cell not found' }, 404);
+  return c.json(updated);
+});
+
+// GET /tabular-review/:reviewId/cells
+tr.get('/:reviewId/cells', requireAuth, async (c) => {
+  const db = getDb(c.env.DB);
+  const reviewId = c.req.param('reviewId');
+  const cells = await db.select().from(schema.tabularCells)
+    .where(eq(schema.tabularCells.reviewId, reviewId))
+    .orderBy(schema.tabularCells.columnIndex)
+    .all();
+  return c.json(cells);
+});
+
+// POST /tabular-review/:reviewId/chat/create
+tr.post('/:reviewId/chat/create', requireAuth, async (c) => {
+  const db = getDb(c.env.DB);
+  const userId = c.get('userId');
+  const reviewId = c.req.param('reviewId');
+  const body = await c.req.json();
+
+  const review = await db.select().from(schema.tabularReviews)
+    .where(eq(schema.tabularReviews.id, reviewId)).get();
+  if (!review) return c.json({ error: 'Review not found' }, 404);
+
+  const chat = await db.insert(schema.tabularReviewChats).values({
+    reviewId,
+    userId,
+    title: body.title || null,
+  }).returning().get();
+  return c.json({ id: chat.id }, 201);
+});
+
+// GET /tabular-review/:reviewId/chats
+tr.get('/:reviewId/chats', requireAuth, async (c) => {
+  const db = getDb(c.env.DB);
+  const reviewId = c.req.param('reviewId');
+  const chats = await db.select().from(schema.tabularReviewChats)
+    .where(eq(schema.tabularReviewChats.reviewId, reviewId))
+    .orderBy(desc(schema.tabularReviewChats.createdAt))
+    .all();
+  return c.json(chats);
+});
+
+// GET /tabular-review/:reviewId/chat/:chatId/messages
+tr.get('/:reviewId/chat/:chatId/messages', requireAuth, async (c) => {
+  const db = getDb(c.env.DB);
+  const chatId = c.req.param('chatId');
+  const messages = await db.select().from(schema.tabularReviewChatMessages)
+    .where(eq(schema.tabularReviewChatMessages.chatId, chatId))
+    .orderBy(schema.tabularReviewChatMessages.createdAt)
+    .all();
+  return c.json(messages);
+});
+
+app.route('/tabular-review', tr);
+
+// -----------------------------------------------------------------------
+// Project chat streaming
+// -----------------------------------------------------------------------
+app.post('/projects/:projectId/chat', requireAuth, async (c) => {
+  const db = getDb(c.env.DB);
+  const userId = c.get('userId');
+  const userEmail = c.get('userEmail');
+  const projectId = c.req.param('projectId');
+  const body = await c.req.json();
+  const { messages, model, chat_id } = body as {
+    messages: any[];
+    model?: string;
+    chat_id?: string;
+  };
+
+  // Verify project access
+  const project = await db.select().from(schema.projects)
+    .where(eq(schema.projects.id, projectId)).get();
+  if (!project) return c.json({ error: 'Project not found' }, 404);
+
+  const isOwner = project.userId === userId;
+  let sharedWith: string[] = [];
+  try { sharedWith = JSON.parse(project.sharedWith || '[]'); } catch {}
+  const isShared = userEmail && sharedWith.includes(userEmail.toLowerCase());
+  if (!isOwner && !isShared) return c.json({ error: 'Project not found' }, 404);
+
+  // Get or create chat
+  let chatId = chat_id || null;
+  let chatTitle: string | null = null;
+
+  if (chatId) {
+    const existingChat = await db.select().from(schema.chats)
+      .where(and(eq(schema.chats.id, chatId), eq(schema.chats.projectId, projectId))).get();
+    if (!existingChat) chatId = null;
+    else chatTitle = existingChat.title;
+  }
+
+  if (!chatId) {
+    const newChat = await db.insert(schema.chats).values({
+      userId,
+      projectId,
+    }).returning().get();
+    chatId = newChat.id;
+  }
+
+  const lastUser = [...messages].reverse().find((m: any) => m.role === 'user');
+  if (lastUser) {
+    await db.insert(schema.chatMessages).values({
+      chatId,
+      role: 'user',
+      content: lastUser.content,
+      files: lastUser.files ? JSON.stringify(lastUser.files) : null,
+    }).run();
+  }
+
+  // Project docs context
+  const projectDocs = await db.select().from(schema.documents)
+    .where(eq(schema.documents.projectId, projectId))
+    .all();
+
+  const docContext = projectDocs.map((d: any) => ({
+    doc_id: d.id,
+    filename: d.status,
+  }));
+
+  // Use TanStack AI (non-streaming) to get the full response
+  const modelName = model || 'claude-sonnet-4-20250514';
+  let adapter: any;
+
+  if (modelName.includes('claude') || modelName.includes('anthropic')) {
+    adapter = anthropicText(modelName, { apiKey: body.apiKeys?.claude });
+  } else if (modelName.includes('gemini')) {
+    adapter = geminiText(modelName, { apiKey: body.apiKeys?.gemini });
+  } else {
+    adapter = openaiText(modelName, {
+      apiKey: body.apiKeys?.openai || body.apiKeys?.openrouter,
+      baseUrl: body.apiKeys?.openrouter ? 'https://openrouter.ai/api/v1' : undefined,
+    });
+  }
+
+  const systemPrompt = `Ești un asistent juridic expert în legislația românească. Ajuți utilizatorii să analizeze documente și să pregătească documente juridice. Răspunde în limba în care utilizatorul scrie.
+
+PROJECT CONTEXT:
+You are operating within project "${project.name}". Available documents:
+${docContext.map((d: any) => `- ${d.doc_id}: ${d.filename}`).join('\n')}
+
+Use the context above to help the user with their project documents.`;
+
+  // @ts-ignore
+  const fullText: string = await chat({
+    adapter,
+    stream: false,
+    messages: messages.map((m: any) => ({
+      role: m.role,
+      content: m.content,
+    })),
+    system: systemPrompt,
+    maxTokens: 8192,
+  });
+
+  await db.insert(schema.chatMessages).values({
+    chatId,
+    role: 'assistant',
+    content: fullText,
+  }).run();
+
+  // Generate title from first message
+  if (!chatTitle && lastUser?.content) {
+    const title = lastUser.content.slice(0, 120);
+    await db.update(schema.chats)
+      .set({ title })
+      .where(eq(schema.chats.id, chatId))
+      .run();
+  }
+
+  // Stream as SSE
+  const encoder = new TextEncoder();
+  const { readable, writable } = new TransformStream();
+  const writer = writable.getWriter();
+
+  c.executionCtx.waitUntil((async () => {
+    try {
+      await writer.write(encoder.encode(`data: ${JSON.stringify({ type: 'chat_id', chatId })}\n\n`));
+      await writer.write(encoder.encode(`data: ${JSON.stringify({ type: 'content_delta', text: fullText })}\n\n`));
+      await writer.write(encoder.encode('data: [DONE]\n\n'));
+    } catch (e) {
+      console.error('[projectChat] stream error:', e);
+    } finally {
+      await writer.close();
+    }
+  })());
+
+  return new Response(readable, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+    },
+  });
+});
+
+// -----------------------------------------------------------------------
+// Tabular review streaming chat
+// -----------------------------------------------------------------------
+app.post('/tabular-review/:reviewId/chat', requireAuth, async (c) => {
+  const db = getDb(c.env.DB);
+  const userId = c.get('userId');
+  const reviewId = c.req.param('reviewId');
+  const body = await c.req.json();
+  const { messages, model } = body;
+
+  const review = await db.select().from(schema.tabularReviews)
+    .where(eq(schema.tabularReviews.id, reviewId)).get();
+  if (!review) return c.json({ error: 'Review not found' }, 404);
+
+  // Get or create chat
+  let chatId = body.chat_id || null;
+  if (chatId) {
+    const existing = await db.select().from(schema.tabularReviewChats)
+      .where(and(eq(schema.tabularReviewChats.id, chatId), eq(schema.tabularReviewChats.reviewId, reviewId))).get();
+    if (!existing) chatId = null;
+  }
+
+  if (!chatId) {
+    const newChat = await db.insert(schema.tabularReviewChats).values({
+      reviewId,
+      userId,
+    }).returning().get();
+    chatId = newChat.id;
+  }
+
+  const lastUser = [...messages].reverse().find((m: any) => m.role === 'user');
+  if (lastUser) {
+    await db.insert(schema.tabularReviewChatMessages).values({
+      chatId,
+      role: 'user',
+      content: lastUser.content,
+    }).run();
+  }
+
+  // TanStack AI non-streaming
+  const modelName = model || 'gemini-3-flash-preview';
+  let adapter: any;
+  if (modelName.includes('gemini')) {
+    adapter = geminiText(modelName, { apiKey: body.apiKeys?.gemini });
+  } else if (modelName.includes('claude')) {
+    adapter = anthropicText(modelName, { apiKey: body.apiKeys?.claude });
+  } else {
+    adapter = openaiText(modelName, { apiKey: body.apiKeys?.openai });
+  }
+
+  const reviewInfo = `Tabular Review: ${review.title || 'Untitled'}`;
+  // @ts-ignore
+  const fullText: string = await chat({
+    adapter,
+    stream: false,
+    messages,
+    system: `Ești un asistent juridic expert. Ajuți utilizatorul să analizeze documente în cadrul unui review tabular.\n\n${reviewInfo}`,
+    maxTokens: 4096,
+  });
+
+  await db.insert(schema.tabularReviewChatMessages).values({
+    chatId,
+    role: 'assistant',
+    content: fullText,
+  }).run();
+
+  const encoder = new TextEncoder();
+  const { readable, writable } = new TransformStream();
+  const writer = writable.getWriter();
+
+  c.executionCtx.waitUntil((async () => {
+    try {
+      await writer.write(encoder.encode(`data: ${JSON.stringify({ type: 'content_delta', text: fullText })}\n\n`));
+      await writer.write(encoder.encode('data: [DONE]\n\n'));
+    } catch (e) {
+      console.error('[tabularChat] stream error:', e);
+    } finally {
+      await writer.close();
+    }
+  })());
+
+  return new Response(readable, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+    },
+  });
+});
+
+// -----------------------------------------------------------------------
+// Tabular review generate endpoint
+// -----------------------------------------------------------------------
+app.post('/tabular-review/:reviewId/generate', requireAuth, async (c) => {
+  const db = getDb(c.env.DB);
+  const r2 = c.env.R2;
+  const userId = c.get('userId');
+  const reviewId = c.req.param('reviewId');
+  const body = await c.req.json();
+  const { columns, model } = body;
+
+  const review = await db.select().from(schema.tabularReviews)
+    .where(eq(schema.tabularReviews.id, reviewId)).get();
+  if (!review) return c.json({ error: 'Review not found' }, 404);
+
+  let docIds: string[] = [];
+  try { docIds = JSON.parse(review.documentIds || '[]'); } catch {}
+
+  if (docIds.length === 0) return c.json({ error: 'No documents in review' }, 400);
+
+  const docs = await db.select().from(schema.documents)
+    .where(inArray(schema.documents.id, docIds))
+    .all();
+
+  const columnList = Array.isArray(columns) ? columns : [];
+  const encoder = new TextEncoder();
+  const { readable, writable } = new TransformStream();
+  const writer = writable.getWriter();
+
+  c.executionCtx.waitUntil((async () => {
+    try {
+      for (const doc of docs as any[]) {
+        // Get document text via R2
+        let docText = '';
+        if (doc.currentVersionId) {
+          const ver = await db.select().from(schema.documentVersions)
+            .where(eq(schema.documentVersions.id, doc.currentVersionId)).get();
+          if (ver) {
+            const obj = await r2.get(ver.storagePath);
+            if (obj) {
+              const buf = await obj.arrayBuffer();
+              docText = new TextDecoder().decode(buf).slice(0, 10000);
+            }
+          }
+        }
+
+        for (const col of columnList) {
+          const prompt = col.prompt
+            ? `${col.prompt}\n\nDocument content:\n${docText.slice(0, 4000)}`
+            : `Based on this document, provide a ${col.name} analysis.\n\nDocument: ${docText.slice(0, 4000)}`;
+
+          const modelName = model || 'gemini-3-flash-preview';
+          let adapter: any;
+          if (modelName.includes('gemini')) {
+            adapter = geminiText(modelName, { apiKey: body.apiKeys?.gemini });
+          } else {
+            adapter = openaiText(modelName, { apiKey: body.apiKeys?.openai });
+          }
+
+          // @ts-ignore
+          const content: string = await chat({
+            adapter,
+            stream: false,
+            messages: [{ role: 'user', content: prompt }],
+            maxTokens: 1024,
+          });
+
+          // Upsert cell
+          const existingCell = await db.select().from(schema.tabularCells)
+            .where(and(
+              eq(schema.tabularCells.reviewId, reviewId),
+              eq(schema.tabularCells.documentId, doc.id),
+              eq(schema.tabularCells.columnIndex, col.index)
+            )).get();
+
+          if (existingCell) {
+            await db.update(schema.tabularCells)
+              .set({ content, citations: null, status: 'completed' })
+              .where(eq(schema.tabularCells.id, existingCell.id))
+              .run();
+          } else {
+            await db.insert(schema.tabularCells).values({
+              reviewId,
+              documentId: doc.id,
+              columnIndex: col.index,
+              content,
+              status: 'completed',
+            }).run();
+          }
+
+          await writer.write(encoder.encode(`data: ${JSON.stringify({
+            type: 'cell_complete',
+            documentId: doc.id,
+            columnIndex: col.index,
+            content,
+          })}\n\n`));
+        }
+      }
+      await writer.write(encoder.encode('data: [DONE]\n\n'));
+    } catch (e) {
+      console.error('[generate] error:', e);
+      await writer.write(encoder.encode(`data: ${JSON.stringify({ type: 'error', message: String(e) })}\n\n`));
+    } finally {
+      await writer.close();
+    }
+  })());
+
+  return new Response(readable, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+    },
+  });
+});
+
+// -----------------------------------------------------------------------
+// Tabular review prompt generation
+// -----------------------------------------------------------------------
+app.post('/tabular-review/prompt', requireAuth, async (c) => {
+  const body = await c.req.json();
+  const title = (body.title || '').trim();
+  if (!title) return c.json({ error: 'title is required' }, 400);
+
+  const format: string = body.format || 'text';
+  const documentName: string = (body.documentName || '').trim();
+  const tags: string[] = Array.isArray(body.tags) ? body.tags.filter((t: unknown) => typeof t === 'string') : [];
+
+  const formatDescriptions: Record<string, string> = {
+    text: 'free-form text',
+    bulleted_list: 'a bulleted list',
+    number: 'a single number',
+    percentage: 'a percentage value',
+    monetary_amount: 'a monetary amount',
+    currency: 'a currency code',
+    yes_no: 'Yes or No',
+    date: 'a date',
+    tag: tags.length ? `one of these tags: ${tags.join(', ')}` : 'a tag',
+  };
+  const formatHint = formatDescriptions[format] || 'free-form text';
+  const tagsNote = format === 'tag' && tags.length ? `\nAvailable tags: ${tags.join(', ')}` : '';
+  const docNote = documentName ? `\nDocument type/name: ${documentName}` : '';
+
+  const prompt = `You are a legal document reviewer. For each document, output ${formatHint} based on the column title "${title}".${tagsNote}${docNote}`;
+  return c.json({ prompt });
 });
 
 export default app;

@@ -13,7 +13,6 @@
     "@aws-sdk/s3-request-presigner": "^3.787.0",
     "@google/genai": "^1.50.1",
     "@hono/zod-validator": "^0.8.0",
-    "@supabase/supabase-js": "^2.49.4",
     "@tanstack/ai": "^0.28.0",
     "@tanstack/ai-anthropic": "^0.15.1",
     "@tanstack/ai-gemini": "^0.15.1",
